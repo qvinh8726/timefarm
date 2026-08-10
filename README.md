@@ -240,7 +240,7 @@ TimeFarm is runnable and tested locally, but the following still require real ho
 - Add a production code-signing certificate, clean-machine installer test, upgrade test, and update policy.
 - Choose and validate a production FX provider and freshness policy.
 
-These boundaries are tracked in [`ROADMAP.md`](ROADMAP.md), [`TEST_CASES.md`](TEST_CASES.md), and [`DECISION_LOG.md`](DECISION_LOG.md).
+These boundaries are tracked in [`ARCHITECTURE.md`](ARCHITECTURE.md) and the issue tracker.
 
 ## Troubleshooting
 
@@ -287,12 +287,9 @@ The current installer is unsigned. Verify that the download came from the offici
 
 ## Project documentation
 
-- [`PRD.md`](PRD.md) — product requirements and user outcomes.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — implementation boundaries and data flow.
-- [`ROADMAP.md`](ROADMAP.md) — milestones and remaining work.
-- [`TEST_CASES.md`](TEST_CASES.md) — automated coverage and manual acceptance matrix.
-- [`DECISION_LOG.md`](DECISION_LOG.md) — durable technical and product decisions.
-- [`MASTER_PROMPT.md`](MASTER_PROMPT.md) — original project brief used to define the build.
+- [GitHub Issues](https://github.com/qvinh8726/timefarm/issues) — current bugs, ideas, and release gates.
+- [GitHub Actions](https://github.com/qvinh8726/timefarm/actions) — automated CI runs.
 
 ## SEO keywords
 
