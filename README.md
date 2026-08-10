@@ -9,7 +9,7 @@
 
 The app keeps the timer useful without a network connection, stores work history locally in SQLite, and synchronizes to Supabase only when the account is authenticated and the device is eligible to sync. TimeFarm never invents an exchange rate and never replaces an original-currency financial record with a conversion.
 
-**Download:** [TimeFarm v0.1.0 for Windows](https://github.com/qvinh8726/timefarm/releases/tag/v0.1.0) · **Source:** [github.com/qvinh8726/timefarm](https://github.com/qvinh8726/timefarm)
+**Download:** [TimeFarm v0.1.1 for Windows](https://github.com/qvinh8726/timefarm/releases/tag/v0.1.1) · **Source:** [github.com/qvinh8726/timefarm](https://github.com/qvinh8726/timefarm)
 
 > Current release status: the Windows installer is available, but it is unsigned. Windows SmartScreen may display a warning until a production code-signing certificate is configured.
 
@@ -194,7 +194,7 @@ The installer is written to `release/TimeFarm-<version>-Setup.exe`. For an unpac
 pnpm pack:win:dir
 ```
 
-The public v0.1.0 installer is available on the [GitHub Releases page](https://github.com/qvinh8726/timefarm/releases/tag/v0.1.0).
+The public v0.1.1 installer is available on the [GitHub Releases page](https://github.com/qvinh8726/timefarm/releases/tag/v0.1.1).
 
 ## Architecture
 
