@@ -1,5 +1,11 @@
 # TimeFarm — Windows Time Tracking and Earnings Analytics
 
+<p align="center">
+  <img src="assets/timefarm-avatar.png" width="180" alt="TimeFarm Windows time tracking and earnings analytics app icon" />
+</p>
+
+<p align="center"><strong>Track your hours. Record your real earnings. Understand how your work grows.</strong></p>
+
 [![CI](https://github.com/qvinh8726/timefarm/actions/workflows/ci.yml/badge.svg)](https://github.com/qvinh8726/timefarm/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/qvinh8726/timefarm?display_name=tag&sort=semver)](https://github.com/qvinh8726/timefarm/releases)
 [![Windows](https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white)](https://github.com/qvinh8726/timefarm/releases)
@@ -9,7 +15,7 @@
 
 The app keeps the timer useful without a network connection, stores work history locally in SQLite, and synchronizes to Supabase only when the account is authenticated and the device is eligible to sync. TimeFarm never invents an exchange rate and never replaces an original-currency financial record with a conversion.
 
-**Download:** [TimeFarm v0.1.1 for Windows](https://github.com/qvinh8726/timefarm/releases/tag/v0.1.1) · **Source:** [github.com/qvinh8726/timefarm](https://github.com/qvinh8726/timefarm)
+**Download:** [TimeFarm v0.1.2 for Windows](https://github.com/qvinh8726/timefarm/releases/tag/v0.1.2) · **Source:** [github.com/qvinh8726/timefarm](https://github.com/qvinh8726/timefarm)
 
 > Current release status: the Windows installer is available, but it is unsigned. Windows SmartScreen may display a warning until a production code-signing certificate is configured.
 
@@ -194,7 +200,7 @@ The installer is written to `release/TimeFarm-<version>-Setup.exe`. For an unpac
 pnpm pack:win:dir
 ```
 
-The public v0.1.1 installer is available on the [GitHub Releases page](https://github.com/qvinh8726/timefarm/releases/tag/v0.1.1).
+The public v0.1.2 installer is available on the [GitHub Releases page](https://github.com/qvinh8726/timefarm/releases/tag/v0.1.2).
 
 ## Architecture
 
@@ -288,6 +294,7 @@ The current installer is unsigned. Verify that the download came from the offici
 ## Project documentation
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — implementation boundaries and data flow.
+- [`assets/timefarm-avatar.png`](assets/timefarm-avatar.png) — official TimeFarm avatar and brand artwork.
 - [GitHub Issues](https://github.com/qvinh8726/timefarm/issues) — current bugs, ideas, and release gates.
 - [GitHub Actions](https://github.com/qvinh8726/timefarm/actions) — automated CI runs.
 

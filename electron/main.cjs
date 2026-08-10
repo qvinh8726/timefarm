@@ -54,6 +54,7 @@ function createWindow() {
     height: 920,
     minWidth: 1080,
     minHeight: 700,
+    icon: path.join(__dirname, '..', 'assets', 'timefarm-avatar.png'),
     backgroundColor: '#0b1020',
     titleBarStyle: 'hiddenInset',
     webPreferences: {
