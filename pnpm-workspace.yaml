@@ -1,0 +1,4 @@
+allowBuilds:
+  # electron-builder's optional Squirrel helper is not used by the NSIS target.
+  # Explicitly decline its install script so pnpm can install reproducibly.
+  electron-winstaller: false

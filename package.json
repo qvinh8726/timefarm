@@ -1,0 +1,85 @@
+{
+  "name": "timefarm-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.16.0",
+  "author": "TimeFarm contributors",
+  "description": "Offline-first work time and earnings analytics desktop app.",
+  "main": "electron/main.cjs",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && electron .\"",
+    "dev:web": "vite --host 127.0.0.1",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run && node --test electron/*.test.cjs",
+    "test:watch": "vitest",
+    "lint": "eslint . --max-warnings=0",
+    "pack:win": "node scripts/prepare-runtime-config.cjs && pnpm build && electron-builder --win nsis --x64 --publish never",
+    "pack:win:dir": "node scripts/prepare-runtime-config.cjs && pnpm build && electron-builder --win dir --x64 --publish never"
+  },
+  "dependencies": {
+    "@js-temporal/polyfill": "^0.5.1",
+    "@supabase/supabase-js": "^2.112.2",
+    "@vitejs/plugin-react": "latest",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "latest",
+    "@types/electron": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "concurrently": "latest",
+    "electron": "43.3.0",
+    "electron-builder": "26.15.3",
+    "eslint": "latest",
+    "eslint-plugin-react-hooks": "latest",
+    "eslint-plugin-react-refresh": "latest",
+    "globals": "latest",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "latest",
+    "vite": "latest",
+    "vitest": "latest",
+    "wait-on": "latest"
+  },
+  "build": {
+    "appId": "com.timefarm.desktop",
+    "productName": "TimeFarm",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json",
+      "!electron/**/*.test.cjs"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "protocols": [
+      {
+        "name": "TimeFarm OAuth",
+        "schemes": ["timefarm"]
+      }
+    ],
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
+    },
+    "artifactName": "${productName}-${version}-Setup.${ext}"
+  }
+}
