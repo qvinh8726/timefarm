@@ -72,6 +72,10 @@ test("keeps workspace claiming atomic, unique, and unavailable to PUBLIC", () =>
   assert.match(claim, /on conflict do nothing/);
   assert.match(
     claim,
+    /'claimed', coalesce\(v_owner_workspace_id = btrim\(p_workspace_id\), false\)/,
+  );
+  assert.match(
+    claim,
     /revoke all on function public\.workly_claim_workspace\(text, jsonb\) from public/,
   );
   assert.match(

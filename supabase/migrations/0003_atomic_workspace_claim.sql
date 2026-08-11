@@ -92,7 +92,7 @@ begin
   where p.id = v_user_id;
 
   return jsonb_build_object(
-    'claimed', v_owner_workspace_id = btrim(p_workspace_id),
+    'claimed', coalesce(v_owner_workspace_id = btrim(p_workspace_id), false),
     'created', v_inserted = 1,
     'workspaceId', v_owner_workspace_id
   );
