@@ -3,6 +3,7 @@ const {
   BrowserWindow,
   dialog,
   ipcMain,
+  Menu,
   safeStorage,
   screen,
   shell,
@@ -119,7 +120,8 @@ function createWindow() {
     minHeight: 700,
     icon: path.join(__dirname, "..", "assets", "timefarm-avatar.png"),
     backgroundColor: "#0b1020",
-    titleBarStyle: "hiddenInset",
+    autoHideMenuBar: true,
+    ...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" } : {}),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -129,6 +131,12 @@ function createWindow() {
       preload: path.join(__dirname, "preload.cjs"),
     },
   });
+
+  // TimeFarm uses its own in-app navigation. Electron's generated
+  // File/Edit/View/Window menu is developer chrome and must never appear in
+  // the customer-facing Windows build, even after the user presses Alt.
+  mainWindow.setMenu(null);
+  mainWindow.setMenuBarVisibility(false);
 
   if (isPackagedSmokeTest) {
     packagedSmokeTimeout = setTimeout(() => {
@@ -486,6 +494,7 @@ app.on("open-url", (event, url) => {
 app
   .whenReady()
   .then(() => {
+    Menu.setApplicationMenu(null);
     const userDataPath = app.getPath("userData");
     repository = new LocalStateRepository(path.join(userDataPath, "workly.db"));
     repository.importLegacyJson(path.join(userDataPath, "workly-state.json"));

@@ -5,6 +5,25 @@ once a stable release line is declared; 0.x releases remain beta.
 
 ## Unreleased
 
+## 0.2.1 - 2026-08-12
+
+### Windows UI hotfix
+
+- Removed Electron's generated File/Edit/View/Window application menu from
+  the Windows build, including the menu-bar reveal previously triggered by Alt.
+- Fixed an unlayered legacy stylesheet that overrode the redesigned dashboard
+  grid and could squeeze widgets into columns as narrow as 77 pixels.
+- Rebalanced the default dashboard order and widget sizes, switched cramped
+  tablet layouts to full-width cards, and compacted sidebar navigation earlier.
+- Corrected the sync-status pill and icon-only mobile controls so their labels
+  no longer overflow narrow toolbars.
+
+### Verification
+
+- Visually audited the live renderer at 1440×900, 1080×720, 900×1000, and
+  390×844, then re-ran formatting, linting, 137 automated tests, coverage,
+  bundle budgets, and the packaged Windows application smoke test.
+
 ## 0.2.0 - 2026-08-12
 
 ### New experience

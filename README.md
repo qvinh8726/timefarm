@@ -18,19 +18,22 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/qvinh8726/timefarm/releases/download/v0.2.0/TimeFarm-0.2.0-Setup.exe"><strong>Download TimeFarm v0.2.0 for Windows</strong></a>
+  <a href="https://github.com/qvinh8726/timefarm/releases/download/v0.2.1/TimeFarm-0.2.1-Setup.exe"><strong>Download TimeFarm v0.2.1 for Windows</strong></a>
   ·
-  <a href="https://github.com/qvinh8726/timefarm/releases/tag/v0.2.0">Release notes</a>
+  <a href="https://github.com/qvinh8726/timefarm/releases/tag/v0.2.1">Release notes</a>
 </p>
 
 **TimeFarm** is an offline-first Windows time tracker, project timer, freelancer earnings tracker, and productivity analytics dashboard in one focused desktop app. It keeps accurate work sessions locally in SQLite, records money in its original currency, and turns completed work into clear daily, project, goal, and income insights.
 
 TimeFarm works without an internet connection. Supabase sign-in and multi-device synchronization are optional, so the core timer and local work history never depend on a cloud service being available.
 
-> **v0.2.0 is a beta pre-release.** The installer is not digitally signed, so Windows SmartScreen may show a warning. Hosted multi-device sync still requires the included Supabase migrations and real-device validation. Local/offline-first usage is the recommended path for this release.
+> **v0.2.1 is a beta pre-release.** The installer is not digitally signed, so Windows SmartScreen may show a warning. Hosted multi-device sync still requires the included Supabase migrations and real-device validation. Local/offline-first usage is the recommended path for this release.
 
-## What’s new in TimeFarm v0.2.0
+## What’s new in TimeFarm v0.2.1
 
+- **Clean Windows chrome:** removed Electron’s generated File/Edit/View/Window menu from the application and every app window, including after pressing Alt.
+- **Dashboard layout hotfix:** fixed a stale CSS cascade that squeezed dashboard widgets into unusable columns, balanced the default widget arrangement, and made tablet cards reliably use the available width.
+- **Responsive polish:** compact icon navigation now starts before the sidebar becomes cramped, while sync/customize controls stay clean and readable on mobile.
 - **Complete UI/UX redesign:** calmer visual hierarchy, responsive layouts, polished light/dark themes, keyboard focus, reduced motion, and accessible dialogs.
 - **Today command center:** active timer, daily pulse, configurable goals, earnings trends, project distribution, comparisons, and cumulative charts.
 - **Deeper analytics:** 7-day to 1-year ranges, timezone-correct day boundaries, goal pace, efficiency ranking, duration distribution, and data-backed observations.
@@ -99,12 +102,12 @@ TimeFarm works without an internet connection. Supabase sign-in and multi-device
 
 ## Download and install on Windows
 
-1. Download [`TimeFarm-0.2.0-Setup.exe`](https://github.com/qvinh8726/timefarm/releases/download/v0.2.0/TimeFarm-0.2.0-Setup.exe).
+1. Download [`TimeFarm-0.2.1-Setup.exe`](https://github.com/qvinh8726/timefarm/releases/download/v0.2.1/TimeFarm-0.2.1-Setup.exe).
 2. Run the installer on Windows 10 or Windows 11 x64.
 3. Choose the installation directory when prompted.
 4. Create a local profile and start tracking work.
 
-Because v0.2.0 is unsigned, Windows SmartScreen may require **More info → Run anyway**. Verify the SHA-256 value published in the GitHub Release before running the installer.
+Because v0.2.1 is unsigned, Windows SmartScreen may require **More info → Run anyway**. Verify the SHA-256 value published in the GitHub Release before running the installer.
 
 ## Quick start from source
 
@@ -210,7 +213,7 @@ Read the implementation boundaries in [`ARCHITECTURE.md`](ARCHITECTURE.md) and t
 
 ## Release status and known limitations
 
-TimeFarm v0.2.0 is ready for local/offline-first beta evaluation. Before describing it as a stable production multi-device product, the project still needs:
+TimeFarm v0.2.1 is ready for local/offline-first beta evaluation. Before describing it as a stable production multi-device product, the project still needs:
 
 - Hosted verification of every Supabase migration, RLS rule, RPC, Email Auth, and Google OAuth flow.
 - Competing physical-device and extended network-fault testing.

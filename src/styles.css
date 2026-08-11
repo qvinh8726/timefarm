@@ -1,3 +1,7 @@
+/* Keep legacy analytics primitives inside the base layer so this file's
+   final design layer controls the real rendered layout. */
+@import "./analytics.css" layer(base);
+
 @layer base, design;
 
 @layer base {
@@ -2471,9 +2475,19 @@
     color: var(--primary);
   }
   .topbar-actions .sync-pill {
-    border-color: var(--border);
+    min-height: 32px;
+    padding: 0 11px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
     color: var(--muted);
     background: color-mix(in srgb, var(--panel) 78%, transparent);
+    font-size: 11px;
+    font-weight: 650;
+    line-height: 1;
+  }
+  .topbar-actions .sync-pill:hover {
+    border-color: color-mix(in srgb, var(--primary) 34%, var(--border));
+    color: var(--text);
   }
   .theme-indicator,
   .topbar-actions > svg {
@@ -3252,7 +3266,7 @@
     }
   }
 
-  @media (max-width: 870px) {
+  @media (max-width: 960px) {
     .app-shell {
       grid-template-columns: 72px minmax(0, 1fr);
       gap: 8px;
@@ -3270,6 +3284,24 @@
     }
     .sidebar .brand {
       justify-content: center;
+      padding-inline: 0;
+    }
+    .sidebar .brand > span:last-child,
+    .sidebar > .nav-section-label,
+    .sidebar .nav-item span,
+    .sidebar .account-chip div {
+      display: none;
+    }
+    .sidebar nav {
+      justify-items: center;
+    }
+    .sidebar .nav-item {
+      justify-content: center;
+      padding-inline: 0;
+    }
+    .sidebar .account-chip {
+      justify-content: center;
+      padding-inline: 0;
     }
     .sidebar-start {
       display: grid;
@@ -3291,14 +3323,12 @@
       display: none;
     }
     .dashboard-custom-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: minmax(0, 1fr);
     }
-    .dashboard-custom-grid > .dashboard-widget.size-large {
-      grid-column: span 2;
-    }
+    .dashboard-custom-grid > .dashboard-widget.size-large,
     .dashboard-custom-grid > .dashboard-widget.size-medium,
     .dashboard-custom-grid > .dashboard-widget.size-small {
-      grid-column: span 1;
+      grid-column: auto;
     }
   }
 
@@ -3400,6 +3430,8 @@
       padding: 0;
       justify-content: center;
       border-radius: 50%;
+      overflow: hidden;
+      font-size: 0;
     }
     .timezone {
       display: none;
@@ -3422,6 +3454,13 @@
     .dashboard-heading-actions .button.compact {
       width: 41px;
       height: 41px;
+      padding: 0;
+      justify-content: center;
+      overflow: hidden;
+      font-size: 0;
+    }
+    .dashboard-heading-actions .button.compact svg {
+      margin: 0;
     }
     .dashboard-command-grid {
       gap: 10px;

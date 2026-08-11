@@ -1695,10 +1695,10 @@ const dashboardWidgetOrder: DashboardWidgetId[] = [
   "goals",
   "earningsTrend",
   "hoursTrend",
-  "projectBreakdown",
   "rateTrend",
-  "cumulativeEarnings",
+  "projectBreakdown",
   "comparison",
+  "cumulativeEarnings",
 ];
 
 const dashboardWidgetLabels: Record<
@@ -1717,12 +1717,12 @@ const dashboardWidgetLabels: Record<
 
 const dashboardDefaultSizes: Record<DashboardWidgetId, DashboardWidgetSize> = {
   timer: "large",
-  goals: "medium",
+  goals: "small",
   earningsTrend: "large",
   hoursTrend: "large",
   projectBreakdown: "medium",
   rateTrend: "small",
-  cumulativeEarnings: "small",
+  cumulativeEarnings: "large",
   comparison: "medium",
 };
 
