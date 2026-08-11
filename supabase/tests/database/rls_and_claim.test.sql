@@ -70,6 +70,16 @@ insert into public.profiles (
     'UTC'
   );
 
+-- Production clients use the security-definer RPC boundary, so direct table
+-- privileges stay closed by default. Grant the minimum read surface only
+-- inside this rolled-back test transaction to exercise the owner RLS policies
+-- and inspect canonical RPC results as the authenticated role.
+grant select on table
+  public.profiles,
+  public.projects,
+  public.sync_changes
+to authenticated;
+
 select set_config(
   'request.jwt.claims',
   '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated"}',
