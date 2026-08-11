@@ -171,12 +171,12 @@
 
 .sidebar .sync-pill.queued .sync-dot {
   background: #f1bd79;
-  box-shadow: 0 0 0 3px rgba(241, 189, 121, .13);
+  box-shadow: 0 0 0 3px rgba(241, 189, 121, 0.13);
 }
 
 .sidebar .sync-pill.error .sync-dot {
   background: #f08698;
-  box-shadow: 0 0 0 3px rgba(240, 134, 152, .13);
+  box-shadow: 0 0 0 3px rgba(240, 134, 152, 0.13);
 }
 
 .recovery-custom-end {
@@ -315,7 +315,7 @@
 
 .dashboard-customize-controls .icon-button:disabled {
   cursor: not-allowed;
-  opacity: .35;
+  opacity: 0.35;
 }
 
 .dashboard-customize-controls select {

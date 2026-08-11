@@ -1,0 +1,82 @@
+name: Signed stable Windows release
+
+on:
+  push:
+    tags:
+      - "v[1-9]*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Require release credentials and public cloud configuration
+        shell: pwsh
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+          TIMEFARM_SUPABASE_URL: ${{ secrets.TIMEFARM_SUPABASE_URL }}
+          TIMEFARM_SUPABASE_ANON_KEY: ${{ secrets.TIMEFARM_SUPABASE_ANON_KEY }}
+        run: |
+          if (-not $env:CSC_LINK -or -not $env:CSC_KEY_PASSWORD) {
+            throw "Signed releases require WINDOWS_CSC_LINK and WINDOWS_CSC_KEY_PASSWORD."
+          }
+          if (-not $env:TIMEFARM_SUPABASE_URL -or -not $env:TIMEFARM_SUPABASE_ANON_KEY) {
+            throw "Cloud-enabled releases require TIMEFARM_SUPABASE_URL and TIMEFARM_SUPABASE_ANON_KEY."
+          }
+      - name: Verify source
+        run: |
+          pnpm format:check
+          pnpm lint
+          pnpm lint:css
+          pnpm check:electron
+          pnpm check:workflows
+          pnpm test
+          pnpm build
+          pnpm check:bundle
+      - name: Verify hosted database contract
+        env:
+          TIMEFARM_SUPABASE_URL: ${{ secrets.TIMEFARM_SUPABASE_URL }}
+          TIMEFARM_SUPABASE_ANON_KEY: ${{ secrets.TIMEFARM_SUPABASE_ANON_KEY }}
+        run: pnpm check:cloud
+      - name: Build signed installer
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+          TIMEFARM_SUPABASE_URL: ${{ secrets.TIMEFARM_SUPABASE_URL }}
+          TIMEFARM_SUPABASE_ANON_KEY: ${{ secrets.TIMEFARM_SUPABASE_ANON_KEY }}
+        run: pnpm pack:win
+      - name: Smoke-test the signed packaged application and installer
+        run: |
+          pnpm smoke:win:packaged
+          pnpm smoke:win:installer
+      - name: Create checksums
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -LiteralPath "release" -Filter "TimeFarm-*-Setup.exe" |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if (-not $installer) { throw "Signed installer was not created." }
+          $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
+          if ($signature.Status -ne "Valid") {
+            throw "Installer signature is not valid: $($signature.Status)"
+          }
+          Get-FileHash -Algorithm SHA256 -LiteralPath $installer.FullName |
+            ForEach-Object { "$($_.Hash.ToLower())  $([IO.Path]::GetFileName($_.Path))" } |
+            Set-Content -Encoding ascii -LiteralPath "release/SHA256SUMS.txt"
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: |
+            release/TimeFarm-*-Setup.exe
+            release/SHA256SUMS.txt

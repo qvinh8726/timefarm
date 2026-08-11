@@ -1,115 +1,134 @@
-const assert = require('node:assert/strict')
-const test = require('node:test')
-const { createOverlayTimerActionHandler } = require('./overlay-timer-actions.cjs')
+const assert = require("node:assert/strict");
+const test = require("node:test");
+const {
+  createOverlayTimerActionHandler,
+} = require("./overlay-timer-actions.cjs");
 
 function createRepository(state) {
   return {
     state,
     writes: 0,
-    loadState() { return this.state },
-    replaceState(next) { this.writes += 1; this.state = next; return next },
-  }
+    loadState() {
+      return this.state;
+    },
+    replaceState(next) {
+      this.writes += 1;
+      this.state = next;
+      return next;
+    },
+  };
 }
 
 function stateWithAccount() {
   return {
-    account: { id: 'account-1', timezone: 'Asia/Ho_Chi_Minh' },
+    account: { id: "account-1", timezone: "Asia/Ho_Chi_Minh" },
     sessions: [],
-  }
+  };
 }
 
-test('interactive overlay actions enforce one active session and mutate only through the repository', async () => {
-  const repository = createRepository(stateWithAccount())
-  const changes = []
-  let syncs = 0
+test("overlay actions require the shared command service instead of a divergent fallback", () => {
+  const repository = createRepository(stateWithAccount());
+  assert.throws(
+    () => createOverlayTimerActionHandler({ repository }),
+    /command service is required/i,
+  );
+});
+
+test("stop requests an in-app completion flow and never silently writes zero earnings", async () => {
+  const state = stateWithAccount();
+  state.sessions.push({
+    id: "session-1",
+    status: "running",
+    pauses: [],
+    startedAt: "2026-08-10T00:00:00.000Z",
+  });
+  const repository = createRepository(state);
+  const requested = [];
+  let opened = 0;
   const action = createOverlayTimerActionHandler({
     repository,
-    onStateChanged: (state) => changes.push(state),
-    syncNow: () => { syncs += 1 },
-  })
-
-  assert.equal((await action('start')).ok, true)
-  assert.equal(repository.state.sessions.length, 1)
-  assert.equal(repository.state.sessions[0].status, 'running')
-  assert.equal(repository.state.sessions[0].projectId, undefined)
-  assert.equal((await action('start')).ok, false)
-  assert.equal((await action('pause')).ok, true)
-  assert.equal(repository.state.sessions[0].status, 'paused')
-  assert.equal(repository.state.sessions[0].pauses.length, 1)
-  assert.equal((await action('resume')).ok, true)
-  assert.equal(repository.state.sessions[0].status, 'running')
-  assert.ok(repository.state.sessions[0].pauses[0].endedAt)
-  assert.equal(repository.writes, 3)
-  assert.equal(changes.length, 3)
-  assert.equal(syncs, 3)
-})
-
-test('stop requests an in-app completion flow and never silently writes zero earnings', async () => {
-  const state = stateWithAccount()
-  state.sessions.push({ id: 'session-1', status: 'running', pauses: [], startedAt: '2026-08-10T00:00:00.000Z' })
-  const repository = createRepository(state)
-  const requested = []
-  let opened = 0
-  const action = createOverlayTimerActionHandler({
-    repository,
-    onOpen: () => { opened += 1 },
+    commandService: {
+      execute: () => {
+        throw new Error("stop must not execute a command");
+      },
+    },
+    onOpen: () => {
+      opened += 1;
+    },
     onStopRequested: (request) => requested.push(request),
-  })
+  });
 
-  const result = await action('stop')
-  assert.equal(result.ok, true)
-  assert.equal(result.requiresCompletion, true)
-  assert.equal(opened, 1)
-  assert.equal(repository.writes, 0)
-  assert.equal(requested[0].sessionId, 'session-1')
-  assert.equal(requested[0].session.status, 'running')
-})
+  const result = await action("stop");
+  assert.equal(result.ok, true);
+  assert.equal(result.requiresCompletion, true);
+  assert.equal(opened, 1);
+  assert.equal(repository.writes, 0);
+  assert.equal(requested[0].sessionId, "session-1");
+  assert.equal(requested[0].session.status, "running");
+});
 
-test('command-backed overlay actions use the same typed timer path and respect a remote lease', async () => {
-  const repository = createRepository(stateWithAccount())
-  const commands = []
-  let renewed = 0
+test("command-backed overlay actions use the same typed timer path and respect a remote lease", async () => {
+  const repository = createRepository(stateWithAccount());
+  const commands = [];
+  let renewed = 0;
   const action = createOverlayTimerActionHandler({
     repository,
     commandService: {
       execute: (command) => {
-        commands.push(command)
-        return { command: command.type, state: repository.state, result: { sessionId: 'session-1' } }
+        commands.push(command);
+        return {
+          command: command.type,
+          state: repository.state,
+          result: { sessionId: "session-1" },
+        };
       },
     },
-    acquireTimerLease: async () => ({ state: 'acquired' }),
-    startLeaseRenewal: () => { renewed += 1 },
-  })
+    acquireTimerLease: async () => ({ state: "acquired" }),
+    startLeaseRenewal: () => {
+      renewed += 1;
+    },
+  });
 
-  assert.equal((await action('start')).ok, true)
-  assert.deepEqual(commands, [{ type: 'session.start', payload: {} }])
-  assert.equal(renewed, 1)
-  assert.equal(repository.writes, 0)
+  assert.equal((await action("start")).ok, true);
+  assert.deepEqual(commands, [{ type: "session.start", payload: {} }]);
+  assert.equal(renewed, 1);
+  assert.equal(repository.writes, 0);
 
   const blocked = createOverlayTimerActionHandler({
     repository,
-    commandService: { execute: () => { throw new Error('must not execute') } },
-    acquireTimerLease: async () => ({ state: 'held_by_other' }),
-  })
-  const result = await blocked('start')
-  assert.equal(result.ok, false)
-  assert.match(result.message, /another signed-in device/i)
-})
+    commandService: {
+      execute: () => {
+        throw new Error("must not execute");
+      },
+    },
+    acquireTimerLease: async () => ({ state: "held_by_other" }),
+  });
+  const result = await blocked("start");
+  assert.equal(result.ok, false);
+  assert.match(result.message, /another signed-in device/i);
+});
 
-test('command-backed overlay preflights a stale timer action before it requests a lease', async () => {
-  const repository = createRepository(stateWithAccount())
-  let leaseRequests = 0
+test("command-backed overlay preflights a stale timer action before it requests a lease", async () => {
+  const repository = createRepository(stateWithAccount());
+  let leaseRequests = 0;
   const action = createOverlayTimerActionHandler({
     repository,
     commandService: {
-      preflight: () => { throw new Error('Only a paused session can be resumed.') },
-      execute: () => { throw new Error('must not execute') },
+      preflight: () => {
+        throw new Error("Only a paused session can be resumed.");
+      },
+      execute: () => {
+        throw new Error("must not execute");
+      },
     },
-    acquireTimerLease: async () => { leaseRequests += 1; return { state: 'acquired' } },
-  })
+    acquireTimerLease: async () => {
+      leaseRequests += 1;
+      return { state: "acquired" };
+    },
+  });
 
-  const result = await action('resume')
-  assert.equal(result.ok, false)
-  assert.match(result.message, /paused session/i)
-  assert.equal(leaseRequests, 0)
-})
+  const result = await action("resume");
+  assert.equal(result.ok, false);
+  assert.match(result.message, /paused session/i);
+  assert.equal(leaseRequests, 0);
+});

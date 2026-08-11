@@ -1,17 +1,26 @@
-const path = require('node:path')
-const { fileURLToPath } = require('node:url')
+const path = require("node:path");
+const { fileURLToPath } = require("node:url");
 
 function parseUrl(value) {
-  if (typeof value !== 'string' || !value.trim()) return null
-  try { return new URL(value) } catch { return null }
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    return new URL(value);
+  } catch {
+    return null;
+  }
 }
 
 function hasCredentials(url) {
-  return Boolean(url.username || url.password)
+  return Boolean(url.username || url.password);
 }
 
 function isLoopbackHostname(hostname) {
-  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]' || hostname === '::1'
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "[::1]" ||
+    hostname === "::1"
+  );
 }
 
 /**
@@ -20,18 +29,25 @@ function isLoopbackHostname(hostname) {
  * available solely for a locally hosted development Supabase instance.
  */
 function normaliseExternalOrigin(value) {
-  const parsed = value instanceof URL ? value : parseUrl(value)
-  if (!parsed || hasCredentials(parsed)) return null
-  if (parsed.protocol === 'https:') return parsed.origin
-  if (parsed.protocol === 'http:' && isLoopbackHostname(parsed.hostname)) return parsed.origin
-  return null
+  const parsed = value instanceof URL ? value : parseUrl(value);
+  if (!parsed || hasCredentials(parsed)) return null;
+  if (parsed.protocol === "https:") return parsed.origin;
+  if (parsed.protocol === "http:" && isLoopbackHostname(parsed.hostname))
+    return parsed.origin;
+  return null;
 }
 
 function getAllowedExternalOrigins(configuration = {}) {
   const candidates = Array.isArray(configuration)
     ? configuration
-    : [configuration.supabaseUrl, configuration.url, configuration.TIMEFARM_SUPABASE_URL, configuration.WORKLY_SUPABASE_URL, configuration.VITE_SUPABASE_URL]
-  return new Set(candidates.map(normaliseExternalOrigin).filter(Boolean))
+    : [
+        configuration.supabaseUrl,
+        configuration.url,
+        configuration.TIMEFARM_SUPABASE_URL,
+        configuration.WORKLY_SUPABASE_URL,
+        configuration.VITE_SUPABASE_URL,
+      ];
+  return new Set(candidates.map(normaliseExternalOrigin).filter(Boolean));
 }
 
 /**
@@ -41,19 +57,25 @@ function getAllowedExternalOrigins(configuration = {}) {
  * protocol launcher.
  */
 function normaliseAllowedExternalUrl(value, allowedOrigins) {
-  const parsed = parseUrl(value)
-  if (!parsed || hasCredentials(parsed)) return null
-  const origin = normaliseExternalOrigin(parsed)
-  if (!origin || !allowedOrigins?.has(origin)) return null
-  return parsed.toString()
+  const parsed = parseUrl(value);
+  if (!parsed || hasCredentials(parsed)) return null;
+  const origin = normaliseExternalOrigin(parsed);
+  if (!origin || !allowedOrigins?.has(origin)) return null;
+  return parsed.toString();
 }
 
 function isPathWithin(rootDirectory, candidatePath) {
-  if (typeof rootDirectory !== 'string' || typeof candidatePath !== 'string') return false
-  const root = path.resolve(rootDirectory)
-  const candidate = path.resolve(candidatePath)
-  const relative = path.relative(root, candidate)
-  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
+  if (typeof rootDirectory !== "string" || typeof candidatePath !== "string")
+    return false;
+  const root = path.resolve(rootDirectory);
+  const candidate = path.resolve(candidatePath);
+  const relative = path.relative(root, candidate);
+  return (
+    relative === "" ||
+    (!relative.startsWith(`..${path.sep}`) &&
+      relative !== ".." &&
+      !path.isAbsolute(relative))
+  );
 }
 
 /**
@@ -61,37 +83,59 @@ function isPathWithin(rootDirectory, candidatePath) {
  * in production.  Use parsed origins/paths rather than string prefixes so
  * lookalike hosts and sibling directories cannot pass the navigation check.
  */
-function isAllowedAppNavigation(value, { isDev, devServerUrl, distDirectory } = {}) {
-  const parsed = parseUrl(value)
-  if (!parsed || hasCredentials(parsed)) return false
+/** @param {unknown} value @param {{isDev?: boolean, devServerUrl?: string, distDirectory?: string}} options */
+function isAllowedAppNavigation(
+  value,
+  { isDev, devServerUrl, distDirectory } = {},
+) {
+  const parsed = parseUrl(value);
+  if (!parsed || hasCredentials(parsed)) return false;
 
   if (isDev) {
-    const devServer = parseUrl(devServerUrl)
-    return Boolean(devServer && parsed.origin === devServer.origin && parsed.protocol === devServer.protocol)
+    const devServer = parseUrl(devServerUrl);
+    return Boolean(
+      devServer &&
+        parsed.origin === devServer.origin &&
+        parsed.protocol === devServer.protocol,
+    );
   }
 
-  if (parsed.protocol !== 'file:' || !distDirectory) return false
-  try { return isPathWithin(distDirectory, fileURLToPath(parsed)) } catch { return false }
+  if (parsed.protocol !== "file:" || !distDirectory) return false;
+  try {
+    return isPathWithin(distDirectory, fileURLToPath(parsed));
+  } catch {
+    return false;
+  }
 }
 
 function normaliseOAuthCallbackUrl(value) {
-  const parsed = parseUrl(value)
-  if (!parsed || hasCredentials(parsed)) return null
-  if (parsed.protocol !== 'timefarm:' || parsed.hostname !== 'auth' || parsed.port || parsed.pathname !== '/callback') return null
-  return parsed.toString()
+  const parsed = parseUrl(value);
+  if (!parsed || hasCredentials(parsed)) return null;
+  if (
+    parsed.protocol !== "timefarm:" ||
+    parsed.hostname !== "auth" ||
+    parsed.port ||
+    parsed.pathname !== "/callback"
+  )
+    return null;
+  return parsed.toString();
 }
 
 function findOAuthCallbackUrl(argumentsList) {
-  if (!Array.isArray(argumentsList)) return null
+  if (!Array.isArray(argumentsList)) return null;
   for (const argument of argumentsList) {
-    const callback = normaliseOAuthCallbackUrl(argument)
-    if (callback) return callback
+    const callback = normaliseOAuthCallbackUrl(argument);
+    if (callback) return callback;
   }
-  return null
+  return null;
 }
 
 function isAllowedOverlayNavigation(value, overlayUrl) {
-  return typeof value === 'string' && typeof overlayUrl === 'string' && value === overlayUrl
+  return (
+    typeof value === "string" &&
+    typeof overlayUrl === "string" &&
+    value === overlayUrl
+  );
 }
 
 module.exports = {
@@ -102,4 +146,4 @@ module.exports = {
   normaliseAllowedExternalUrl,
   normaliseExternalOrigin,
   normaliseOAuthCallbackUrl,
-}
+};

@@ -1,8 +1,13 @@
 {
   "name": "timefarm-desktop",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "private": true,
+  "license": "UNLICENSED",
   "packageManager": "pnpm@11.16.0",
+  "engines": {
+    "node": ">=24 <27",
+    "pnpm": ">=11 <12"
+  },
   "author": "TimeFarm contributors",
   "description": "Offline-first work time and earnings analytics desktop app.",
   "main": "electron/main.cjs",
@@ -13,38 +18,57 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run && node --test electron/*.test.cjs",
+    "test:db": "supabase test db --local",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "lint": "eslint . --max-warnings=0",
+    "lint:css": "stylelint \"src/**/*.css\"",
+    "format:check": "prettier --check .",
+    "check:electron": "tsc -p tsconfig.electron.json",
+    "check:bundle": "node scripts/check-bundle-budget.cjs",
+    "check:workflows": "node scripts/check-workflow-pins.cjs",
+    "check:db": "supabase db lint --local --level error",
+    "check:cloud": "node scripts/check-cloud-contract.cjs",
+    "smoke:win:packaged": "node scripts/smoke-packaged-app.cjs",
+    "smoke:win:installer": "node scripts/smoke-windows-installer.cjs",
     "pack:win": "node scripts/prepare-runtime-config.cjs && pnpm build && electron-builder --win nsis --x64 --publish never",
-    "pack:win:dir": "node scripts/prepare-runtime-config.cjs && pnpm build && electron-builder --win dir --x64 --publish never"
+    "pack:win:dir": "pnpm build && electron-builder --win dir --x64 --publish never"
   },
   "dependencies": {
     "@js-temporal/polyfill": "^0.5.1",
     "@supabase/supabase-js": "^2.112.2",
-    "@vitejs/plugin-react": "latest",
-    "lucide-react": "latest",
-    "react": "latest",
-    "react-dom": "latest",
+    "lucide-react": "^1.30.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@eslint/js": "latest",
-    "@types/electron": "latest",
-    "@types/node": "latest",
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
-    "concurrently": "latest",
+    "@eslint/js": "^10.0.1",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.3",
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
+    "@vitest/coverage-v8": "^4.1.10",
+    "axe-core": "^4.13.0",
+    "concurrently": "^10.0.4",
     "electron": "43.3.0",
-    "electron-builder": "26.15.3",
-    "eslint": "latest",
-    "eslint-plugin-react-hooks": "latest",
-    "eslint-plugin-react-refresh": "latest",
-    "globals": "latest",
+    "electron-builder": "26.15.7",
+    "eslint": "^10.8.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.3",
+    "globals": "^17.9.0",
+    "jsdom": "^30.0.1",
+    "prettier": "3.6.2",
+    "stylelint": "^17.14.1",
+    "supabase": "2.113.0",
     "typescript": "^5.7.3",
-    "typescript-eslint": "latest",
-    "vite": "latest",
-    "vitest": "latest",
-    "wait-on": "latest"
+    "typescript-eslint": "^8.66.0",
+    "vite": "^8.2.1",
+    "vitest": "^4.1.10",
+    "wait-on": "^9.1.0"
   },
   "build": {
     "appId": "com.timefarm.desktop",
@@ -74,7 +98,9 @@
     "protocols": [
       {
         "name": "TimeFarm OAuth",
-        "schemes": ["timefarm"]
+        "schemes": [
+          "timefarm"
+        ]
       }
     ],
     "nsis": {

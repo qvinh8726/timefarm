@@ -1,84 +1,103 @@
-const fs = require('node:fs')
-const path = require('node:path')
-const { isAllowedOverlayNavigation } = require('./navigation-security.cjs')
+const fs = require("node:fs");
+const path = require("node:path");
+const { isAllowedOverlayNavigation } = require("./navigation-security.cjs");
 
-const OVERLAY_WIDTH = 286
-const OVERLAY_HEIGHT = 112
-const OVERLAY_MARGIN = 24
-const OVERLAY_MODES = new Set(['interactive', 'view_only', 'hidden'])
-const OVERLAY_ACTIONS = new Set(['start', 'pause', 'resume', 'stop', 'open'])
+const OVERLAY_WIDTH = 286;
+const OVERLAY_HEIGHT = 112;
+const OVERLAY_MARGIN = 24;
+const OVERLAY_MODES = new Set(["interactive", "view_only", "hidden"]);
+const OVERLAY_ACTIONS = new Set(["start", "pause", "resume", "stop", "open"]);
 
 function normaliseMode(value) {
-  return OVERLAY_MODES.has(value) ? value : 'hidden'
+  return OVERLAY_MODES.has(value) ? value : "hidden";
 }
 
 function normalisePosition(value) {
-  if (!value || typeof value !== 'object') return undefined
-  const x = Number(value.x)
-  const y = Number(value.y)
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return undefined
-  return { x: Math.round(x), y: Math.round(y) }
+  if (!value || typeof value !== "object") return undefined;
+  const x = Number(value.x);
+  const y = Number(value.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return undefined;
+  return { x: Math.round(x), y: Math.round(y) };
 }
 
 function activeDurationAt(session, now = Date.now()) {
-  if (!session || !session.startedAt) return 0
-  const startedAt = Date.parse(session.startedAt)
-  if (!Number.isFinite(startedAt)) return 0
-  const endedAt = session.endedAt ? Date.parse(session.endedAt) : now
-  const effectiveEnd = Number.isFinite(endedAt) ? Math.max(startedAt, endedAt) : now
-  let pausedMs = 0
+  if (!session || !session.startedAt) return 0;
+  const startedAt = Date.parse(session.startedAt);
+  if (!Number.isFinite(startedAt)) return 0;
+  const endedAt = session.endedAt ? Date.parse(session.endedAt) : now;
+  const effectiveEnd = Number.isFinite(endedAt)
+    ? Math.max(startedAt, endedAt)
+    : now;
+  let pausedMs = 0;
   for (const pause of Array.isArray(session.pauses) ? session.pauses : []) {
-    const pauseStart = Date.parse(pause?.startedAt)
-    if (!Number.isFinite(pauseStart)) continue
-    const pauseEnd = pause?.endedAt ? Date.parse(pause.endedAt) : now
-    if (!Number.isFinite(pauseEnd)) continue
-    pausedMs += Math.max(0, Math.min(effectiveEnd, pauseEnd) - Math.min(effectiveEnd, Math.max(startedAt, pauseStart)))
+    const pauseStart = Date.parse(pause?.startedAt);
+    if (!Number.isFinite(pauseStart)) continue;
+    const pauseEnd = pause?.endedAt ? Date.parse(pause.endedAt) : now;
+    if (!Number.isFinite(pauseEnd)) continue;
+    pausedMs += Math.max(
+      0,
+      Math.min(effectiveEnd, pauseEnd) -
+        Math.min(effectiveEnd, Math.max(startedAt, pauseStart)),
+    );
   }
-  return Math.max(0, effectiveEnd - startedAt - pausedMs)
+  return Math.max(0, effectiveEnd - startedAt - pausedMs);
 }
 
 function buildTimerSnapshot(state, now = Date.now()) {
-  const sessions = Array.isArray(state?.sessions) ? state.sessions : []
-  const session = sessions.find((candidate) => candidate?.status === 'running' || candidate?.status === 'paused')
+  const sessions = Array.isArray(state?.sessions) ? state.sessions : [];
+  const session = sessions.find(
+    (candidate) =>
+      candidate?.status === "running" || candidate?.status === "paused",
+  );
   if (!session) {
     return {
-      status: 'idle',
+      status: "idle",
       projectName: null,
       activeDurationMs: 0,
       tickedAt: now,
-    }
+    };
   }
-  const projects = Array.isArray(state?.projects) ? state.projects : []
-  const project = session.projectId ? projects.find((candidate) => candidate?.id === session.projectId) : undefined
+  const projects = Array.isArray(state?.projects) ? state.projects : [];
+  const project = session.projectId
+    ? projects.find((candidate) => candidate?.id === session.projectId)
+    : undefined;
   return {
-    status: session.status === 'paused' ? 'paused' : 'running',
+    status: session.status === "paused" ? "paused" : "running",
     projectName: project?.name || null,
     activeDurationMs: activeDurationAt(session, now),
     tickedAt: now,
-  }
+  };
 }
 
 function getDisplayWorkArea(screen) {
-  const primary = screen?.getPrimaryDisplay?.()
-  return primary?.workArea ?? { x: 0, y: 0, width: 1440, height: 900 }
+  const primary = screen?.getPrimaryDisplay?.();
+  return primary?.workArea ?? { x: 0, y: 0, width: 1440, height: 900 };
 }
 
 function defaultPosition(screen) {
-  const area = getDisplayWorkArea(screen)
+  const area = getDisplayWorkArea(screen);
   return {
     x: area.x + Math.max(0, area.width - OVERLAY_WIDTH - OVERLAY_MARGIN),
     y: area.y + Math.max(0, area.height - OVERLAY_HEIGHT - OVERLAY_MARGIN),
-  }
+  };
 }
 
 function clampPosition(position, screen) {
-  const candidate = normalisePosition(position) ?? defaultPosition(screen)
-  const display = screen?.getDisplayNearestPoint?.(candidate) ?? { workArea: getDisplayWorkArea(screen) }
-  const area = display.workArea ?? getDisplayWorkArea(screen)
+  const candidate = normalisePosition(position) ?? defaultPosition(screen);
+  const display = screen?.getDisplayNearestPoint?.(candidate) ?? {
+    workArea: getDisplayWorkArea(screen),
+  };
+  const area = display.workArea ?? getDisplayWorkArea(screen);
   return {
-    x: Math.min(Math.max(candidate.x, area.x), area.x + Math.max(0, area.width - OVERLAY_WIDTH)),
-    y: Math.min(Math.max(candidate.y, area.y), area.y + Math.max(0, area.height - OVERLAY_HEIGHT)),
-  }
+    x: Math.min(
+      Math.max(candidate.x, area.x),
+      area.x + Math.max(0, area.width - OVERLAY_WIDTH),
+    ),
+    y: Math.min(
+      Math.max(candidate.y, area.y),
+      area.y + Math.max(0, area.height - OVERLAY_HEIGHT),
+    ),
+  };
 }
 
 function overlayHtml() {
@@ -143,95 +162,121 @@ function overlayHtml() {
     }
     for (const action of ['start', 'pause', 'resume', 'stop', 'open']) {
       elements[action].addEventListener('click', async () => {
-        const result = await window.worklyOverlay?.action(action);
-        if (result?.message) elements.status.textContent = result.message;
+        try {
+          const result = await window.worklyOverlay?.action(action);
+          if (result?.message) elements.status.textContent = result.message;
+        } catch (error) {
+          elements.status.textContent = error instanceof Error ? error.message : 'Timer action failed. Open TimeFarm to recover.';
+        }
       });
     }
     window.worklyOverlay?.onSnapshot((next) => { snapshot = next || snapshot; render(); });
     render(); setInterval(render, 1000);
   </script>
 </body>
-</html>`
+</html>`;
 }
 
 class OverlayManager {
-  constructor({ BrowserWindow, screen, preloadPath, positionFilePath, onAction = async () => ({ ok: false, message: 'Timer action is unavailable.' }) }) {
-    this.BrowserWindow = BrowserWindow
-    this.screen = screen
-    this.preloadPath = preloadPath
-    this.positionFilePath = positionFilePath
-    this.onAction = onAction
-    this.window = null
-    this.mode = 'hidden'
-    this.snapshot = buildTimerSnapshot(null)
-    this.position = this.readPosition()
+  /** @param {any} options */
+  constructor({
+    BrowserWindow,
+    screen,
+    preloadPath,
+    positionFilePath,
+    onAction = async () => ({
+      ok: false,
+      message: "Timer action is unavailable.",
+    }),
+  }) {
+    this.BrowserWindow = BrowserWindow;
+    this.screen = screen;
+    this.preloadPath = preloadPath;
+    this.positionFilePath = positionFilePath;
+    this.onAction = onAction;
+    this.window = null;
+    this.mode = "hidden";
+    this.snapshot = buildTimerSnapshot(null);
+    this.position = this.readPosition();
   }
 
   readPosition() {
-    if (!this.positionFilePath) return undefined
+    if (!this.positionFilePath) return undefined;
     try {
-      return normalisePosition(JSON.parse(fs.readFileSync(this.positionFilePath, 'utf8')))
+      return normalisePosition(
+        JSON.parse(fs.readFileSync(this.positionFilePath, "utf8")),
+      );
     } catch {
-      return undefined
+      return undefined;
     }
   }
 
   persistPosition(position) {
-    if (!this.positionFilePath) return
+    if (!this.positionFilePath) return;
     try {
-      fs.mkdirSync(path.dirname(this.positionFilePath), { recursive: true })
-      fs.writeFileSync(this.positionFilePath, JSON.stringify(position), { encoding: 'utf8', mode: 0o600 })
+      fs.mkdirSync(path.dirname(this.positionFilePath), { recursive: true });
+      fs.writeFileSync(this.positionFilePath, JSON.stringify(position), {
+        encoding: "utf8",
+        mode: 0o600,
+      });
     } catch {
       // A timer must remain usable even when the local preference file cannot be written.
     }
   }
 
   getPreferences() {
-    const bounds = this.window && !this.window.isDestroyed?.() ? this.window.getBounds?.() : undefined
-    const position = normalisePosition(bounds) ?? this.position ?? defaultPosition(this.screen)
-    return { mode: this.mode, position }
+    const bounds =
+      this.window && !this.window.isDestroyed?.()
+        ? this.window.getBounds?.()
+        : undefined;
+    const position =
+      normalisePosition(bounds) ??
+      this.position ??
+      defaultPosition(this.screen);
+    return { mode: this.mode, position };
   }
 
   setPreferences(input = {}) {
-    if (Object.hasOwn(input, 'position')) this.setPosition(input.position)
-    if (Object.hasOwn(input, 'mode')) this.setMode(input.mode)
-    return this.getPreferences()
+    if (Object.hasOwn(input, "position")) this.setPosition(input.position);
+    if (Object.hasOwn(input, "mode")) this.setMode(input.mode);
+    return this.getPreferences();
   }
 
   setPosition(position) {
-    const next = normalisePosition(position)
-    if (!next) return this.getPreferences()
-    this.position = clampPosition(next, this.screen)
-    this.persistPosition(this.position)
-    if (this.window && !this.window.isDestroyed?.()) this.window.setPosition?.(this.position.x, this.position.y)
-    return this.getPreferences()
+    const next = normalisePosition(position);
+    if (!next) return this.getPreferences();
+    this.position = clampPosition(next, this.screen);
+    this.persistPosition(this.position);
+    if (this.window && !this.window.isDestroyed?.())
+      this.window.setPosition?.(this.position.x, this.position.y);
+    return this.getPreferences();
   }
 
   updateFromState(state) {
-    this.snapshot = buildTimerSnapshot(state)
-    this.setMode(state?.preferences?.miniTimerMode)
-    this.sendSnapshot()
+    this.snapshot = buildTimerSnapshot(state);
+    this.setMode(state?.preferences?.miniTimerMode);
+    this.sendSnapshot();
   }
 
   setMode(mode) {
-    this.mode = normaliseMode(mode)
-    if (this.mode === 'hidden') {
-      if (this.window && !this.window.isDestroyed?.()) this.window.hide?.()
-      return this.getPreferences()
+    this.mode = normaliseMode(mode);
+    if (this.mode === "hidden") {
+      if (this.window && !this.window.isDestroyed?.()) this.window.hide?.();
+      return this.getPreferences();
     }
-    const win = this.ensureWindow()
-    if (!win) return this.getPreferences()
-    this.applyModeToWindow(win)
-    win.showInactive?.()
-    this.sendSnapshot()
-    return this.getPreferences()
+    const win = this.ensureWindow();
+    if (!win) return this.getPreferences();
+    this.applyModeToWindow(win);
+    win.showInactive?.();
+    this.sendSnapshot();
+    return this.getPreferences();
   }
 
   ensureWindow() {
-    if (this.window && !this.window.isDestroyed?.()) return this.window
-    if (!this.BrowserWindow) return null
-    const position = clampPosition(this.position, this.screen)
-    this.position = position
+    if (this.window && !this.window.isDestroyed?.()) return this.window;
+    if (!this.BrowserWindow) return null;
+    const position = clampPosition(this.position, this.screen);
+    this.position = position;
     const win = new this.BrowserWindow({
       x: position.x,
       y: position.y,
@@ -250,7 +295,7 @@ class OverlayManager {
       focusable: false,
       show: false,
       hasShadow: true,
-      title: 'TimeFarm mini timer',
+      title: "TimeFarm mini timer",
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
@@ -259,58 +304,67 @@ class OverlayManager {
         webviewTag: false,
         preload: this.preloadPath,
       },
-    })
-    this.window = win
-    win.setAlwaysOnTop?.(true, 'floating')
-    win.setVisibleOnAllWorkspaces?.(true, { visibleOnFullScreen: true })
-    win.webContents?.setWindowOpenHandler?.(() => ({ action: 'deny' }))
-    const expectedOverlayUrl = `data:text/html;charset=utf-8,${encodeURIComponent(overlayHtml())}`
-    win.webContents?.on?.('will-navigate', (event, url) => {
-      if (!isAllowedOverlayNavigation(url, expectedOverlayUrl)) event.preventDefault()
-    })
-    win.webContents?.on?.('will-redirect', (event, url) => {
-      if (!isAllowedOverlayNavigation(url, expectedOverlayUrl)) event.preventDefault()
-    })
-    win.webContents?.on?.('did-finish-load', () => this.sendSnapshot())
-    win.on?.('moved', () => {
-      if (win.isDestroyed?.()) return
-      this.position = normalisePosition(win.getBounds?.()) ?? this.position
-      if (this.position) this.persistPosition(this.position)
-    })
-    win.on?.('closed', () => { if (this.window === win) this.window = null })
-    win.loadURL?.(expectedOverlayUrl)
-    return win
+    });
+    this.window = win;
+    win.setAlwaysOnTop?.(true, "floating");
+    win.setVisibleOnAllWorkspaces?.(true, { visibleOnFullScreen: true });
+    win.webContents?.setWindowOpenHandler?.(() => ({ action: "deny" }));
+    const expectedOverlayUrl = `data:text/html;charset=utf-8,${encodeURIComponent(overlayHtml())}`;
+    win.webContents?.on?.("will-navigate", (event, url) => {
+      if (!isAllowedOverlayNavigation(url, expectedOverlayUrl))
+        event.preventDefault();
+    });
+    win.webContents?.on?.("will-redirect", (event, url) => {
+      if (!isAllowedOverlayNavigation(url, expectedOverlayUrl))
+        event.preventDefault();
+    });
+    win.webContents?.on?.("did-finish-load", () => this.sendSnapshot());
+    win.on?.("moved", () => {
+      if (win.isDestroyed?.()) return;
+      this.position = normalisePosition(win.getBounds?.()) ?? this.position;
+      if (this.position) this.persistPosition(this.position);
+    });
+    win.on?.("closed", () => {
+      if (this.window === win) this.window = null;
+    });
+    win.loadURL?.(expectedOverlayUrl);
+    return win;
   }
 
   applyModeToWindow(win) {
-    const viewOnly = this.mode === 'view_only'
-    if (viewOnly) win.setIgnoreMouseEvents?.(true, { forward: true })
-    else win.setIgnoreMouseEvents?.(false)
-    win.setFocusable?.(!viewOnly)
-    win.setAlwaysOnTop?.(true, 'floating')
+    const viewOnly = this.mode === "view_only";
+    if (viewOnly) win.setIgnoreMouseEvents?.(true, { forward: true });
+    else win.setIgnoreMouseEvents?.(false);
+    win.setFocusable?.(!viewOnly);
+    win.setAlwaysOnTop?.(true, "floating");
   }
 
   sendSnapshot() {
-    const win = this.window
-    if (!win || win.isDestroyed?.()) return
-    win.webContents?.send?.('workly:overlay-snapshot', { ...this.snapshot, interactive: this.mode === 'interactive' })
+    const win = this.window;
+    if (!win || win.isDestroyed?.()) return;
+    win.webContents?.send?.("workly:overlay-snapshot", {
+      ...this.snapshot,
+      interactive: this.mode === "interactive",
+    });
   }
 
   async handleAction(action) {
-    if (this.mode !== 'interactive') return { ok: false, message: 'The mini timer is view-only.' }
-    if (!OVERLAY_ACTIONS.has(action)) return { ok: false, message: 'Unsupported timer action.' }
-    return this.onAction(action)
+    if (this.mode !== "interactive")
+      return { ok: false, message: "The mini timer is view-only." };
+    if (!OVERLAY_ACTIONS.has(action))
+      return { ok: false, message: "Unsupported timer action." };
+    return this.onAction(action);
   }
 
   getWebContentsId() {
-    const win = this.window
-    return win && !win.isDestroyed?.() ? win.webContents?.id : undefined
+    const win = this.window;
+    return win && !win.isDestroyed?.() ? win.webContents?.id : undefined;
   }
 
   dispose() {
-    const win = this.window
-    this.window = null
-    if (win && !win.isDestroyed?.()) win.destroy?.()
+    const win = this.window;
+    this.window = null;
+    if (win && !win.isDestroyed?.()) win.destroy?.();
   }
 }
 
@@ -324,4 +378,4 @@ module.exports = {
   normaliseMode,
   normalisePosition,
   overlayHtml,
-}
+};

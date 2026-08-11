@@ -1,303 +1,240 @@
-# TimeFarm — Windows Time Tracking and Earnings Analytics
+# TimeFarm – Offline Time Tracker & Earnings Dashboard for Windows
 
 <p align="center">
-  <img src="assets/timefarm-avatar.png" width="180" alt="TimeFarm Windows time tracking and earnings analytics app icon" />
+  <img src="assets/timefarm-avatar.png" width="168" alt="TimeFarm offline time tracker and freelancer earnings dashboard for Windows" />
 </p>
 
-<p align="center"><strong>Track your hours. Record your real earnings. Understand how your work grows.</strong></p>
+<p align="center">
+  <strong>Track focused work. Record real earnings. Understand where your time goes.</strong><br />
+  <sub>Ứng dụng chấm công, quản lý dự án và phân tích thu nhập dành cho Windows.</sub>
+</p>
 
-[![CI](https://github.com/qvinh8726/timefarm/actions/workflows/ci.yml/badge.svg)](https://github.com/qvinh8726/timefarm/actions/workflows/ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/qvinh8726/timefarm?display_name=tag&sort=semver)](https://github.com/qvinh8726/timefarm/releases)
-[![Windows](https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white)](https://github.com/qvinh8726/timefarm/releases)
-[![License](https://img.shields.io/badge/license-not%20specified-lightgrey)](https://github.com/qvinh8726/timefarm)
+<p align="center">
+  <a href="https://github.com/qvinh8726/timefarm/actions/workflows/ci.yml"><img alt="TimeFarm CI" src="https://github.com/qvinh8726/timefarm/actions/workflows/ci.yml/badge.svg" /></a>
+  <a href="https://github.com/qvinh8726/timefarm/releases"><img alt="Latest TimeFarm release" src="https://img.shields.io/github/v/release/qvinh8726/timefarm?include_prereleases&sort=semver&label=release" /></a>
+  <img alt="Windows 10 and Windows 11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white" />
+  <img alt="Offline first" src="https://img.shields.io/badge/offline--first-SQLite-0F9889" />
+  <a href="LICENSE"><img alt="All rights reserved license" src="https://img.shields.io/badge/license-UNLICENSED-lightgrey" /></a>
+</p>
 
-**TimeFarm** is a Windows desktop app for accurate work-time tracking, real earnings recording, and actionable productivity analytics. It is designed for freelancers, independent professionals, consultants, creators, and anyone who needs a reliable **offline-first time tracker with income analytics**.
+<p align="center">
+  <a href="https://github.com/qvinh8726/timefarm/releases/download/v0.2.0/TimeFarm-0.2.0-Setup.exe"><strong>Download TimeFarm v0.2.0 for Windows</strong></a>
+  ·
+  <a href="https://github.com/qvinh8726/timefarm/releases/tag/v0.2.0">Release notes</a>
+</p>
 
-The app keeps the timer useful without a network connection, stores work history locally in SQLite, and synchronizes to Supabase only when the account is authenticated and the device is eligible to sync. TimeFarm never invents an exchange rate and never replaces an original-currency financial record with a conversion.
+**TimeFarm** is an offline-first Windows time tracker, project timer, freelancer earnings tracker, and productivity analytics dashboard in one focused desktop app. It keeps accurate work sessions locally in SQLite, records money in its original currency, and turns completed work into clear daily, project, goal, and income insights.
 
-**Download:** [TimeFarm v0.1.2 for Windows](https://github.com/qvinh8726/timefarm/releases/tag/v0.1.2) · **Source:** [github.com/qvinh8726/timefarm](https://github.com/qvinh8726/timefarm)
+TimeFarm works without an internet connection. Supabase sign-in and multi-device synchronization are optional, so the core timer and local work history never depend on a cloud service being available.
 
-> Current release status: the Windows installer is available, but it is unsigned. Windows SmartScreen may display a warning until a production code-signing certificate is configured.
+> **v0.2.0 is a beta pre-release.** The installer is not digitally signed, so Windows SmartScreen may show a warning. Hosted multi-device sync still requires the included Supabase migrations and real-device validation. Local/offline-first usage is the recommended path for this release.
 
-## Why TimeFarm?
+## What’s new in TimeFarm v0.2.0
 
-Most time trackers stop at a stopwatch. TimeFarm connects the complete workflow:
+- **Complete UI/UX redesign:** calmer visual hierarchy, responsive layouts, polished light/dark themes, keyboard focus, reduced motion, and accessible dialogs.
+- **Today command center:** active timer, daily pulse, configurable goals, earnings trends, project distribution, comparisons, and cumulative charts.
+- **Deeper analytics:** 7-day to 1-year ranges, timezone-correct day boundaries, goal pace, efficiency ranking, duration distribution, and data-backed observations.
+- **Safer offline overlap handling:** overlapping completed sessions count once in account-time totals while every session, earning, and project record stays intact.
+- **Stronger local data:** ordered transactional SQLite migrations, integrity checks, crash recovery, native recovery export, and one-time legacy import.
+- **Safer cloud sync:** atomic workspace claims, paginated bootstrap, pull-before-push, optimistic revisions, RPC deadlines, and explicit conflict resolution.
+- **Verified reference FX:** Frankfurter v2 rates, complete VND/USD/EUR/JPY/GBP coverage, bounded network time, visible source date, and stale-cache status.
+- **Release-grade checks:** 137 automated tests, accessibility coverage, bundle budgets, pinned workflows, packaged Electron smoke, and NSIS install/render/uninstall smoke.
 
-1. Start a work session.
-2. Pause and resume without losing active-time accuracy.
-3. Finish the session and enter the amount actually received.
-4. Keep the original currency and payment context.
-5. Sync safely when online.
-6. Review time, earnings, efficiency, projects, goals, and trends.
+## Why use TimeFarm?
 
-The result is a practical **work-hours tracker**, **freelance earnings tracker**, and **personal productivity dashboard** in one Windows app.
+| Need                          | How TimeFarm helps                                                                                         |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Accurate work hours           | Timestamp and pause-interval accounting survives renderer refreshes and app restarts.                      |
+| Fast project tracking         | Create a project, start work, pause, resume, and finish from one compact workflow.                         |
+| Real freelancer earnings      | Record the amount actually earned per session without rewriting original currencies.                       |
+| Useful productivity analytics | Compare active time, earnings, effective hourly rate, projects, goals, and prior periods.                  |
+| Offline reliability           | SQLite, WAL, transactions, and a durable outbox keep local work available without a network.               |
+| Optional multi-device sync    | Authenticated Supabase synchronization is available when its migrations and OAuth settings are configured. |
+| Native Windows workflow       | Use the full dashboard or a small always-available mini timer with persisted positioning.                  |
 
-## Features
+## Core features
 
-### Accurate work sessions
+### Work timer and session history
 
-- Start, pause, resume, complete, or discard a session.
-- Active duration is calculated from persisted timestamps and pause intervals, not from a fragile in-memory counter.
-- Crash and restart recovery detects an unfinished session and lets you continue, complete, or discard it safely.
-- A strict one-active-session rule protects the local account from accidental overlapping timers.
-- Completed history is protected from unsafe deletion and arbitrary historical rewrites.
+- Start, pause, resume, complete, recover, or discard an unfinished work session.
+- Calculate active duration from persisted timestamps while excluding pauses.
+- Protect completed history from unsafe deletion and arbitrary edits.
+- Edit only the latest eligible completed session.
+- Browse paginated history with project, notes, earnings, currency, and timestamps.
 
-### Projects and payment history
+### Projects, payments, and goals
 
-- Create projects with a name, color, icon, status, and payment model.
-- Track per-session earnings without overwriting project-level payment history.
-- Add, edit, and delete payment records when local history rules allow it.
-- Complete projects explicitly; linked work and payment history remains protected.
-- View project time, earnings, efficiency, status, and recent activity from the dashboard and history views.
+- Create projects with colors, icons, payment models, status, and expected currency.
+- Record session earnings separately from project payment history.
+- Protect projects that already have retained session or payment history.
+- Create daily, weekly, and monthly time/earnings goals plus completed-project goals.
+- See target progress, expected pace, remaining value, and projected completion.
 
-### Goals and dashboard customization
+### Dashboard and analytics
 
-- Create time, earnings, session-count, or completed-project goals.
-- Edit or delete goals from the workspace.
-- Review progress, expected pace, ahead/behind status, and projected completion when enough data exists.
-- Hide, reorder, and resize dashboard widgets to keep the daily view focused.
+- Reorder, resize, or hide dashboard widgets.
+- Review daily pulse, active timer, goals, earnings, project distribution, and comparisons.
+- Explore analytics across 7D, 30D, 1M, 3M, 6M, and 1Y ranges.
+- Split cross-midnight work using the account’s stored IANA timezone.
+- Count overlapping active intervals once in account totals and time goals.
+- Keep earnings and project allocation as original historical facts.
 
-### Analytics that respect the data
+### Money and reference conversion
 
-- Daily and range analytics for 7 days, 30 days, 1 month, 3 months, 6 months, and 1 year.
-- Time, earnings, efficiency, project distribution, session duration, and goal insights.
-- Sessions crossing a day or date-range boundary are allocated by the active time that actually belongs in the selected range.
-- Hourly-rate calculations only compare earnings and time in compatible currencies.
-- Original currency, provider, update time, and stale/unavailable FX state remain visible.
+- Store money in safe integer minor units.
+- Keep VND, USD, EUR, JPY, and GBP records in their original currency.
+- Calculate effective hourly rates only with compatible earning/time denominators.
+- Use [Frankfurter v2](https://frankfurter.dev/) for optional reference conversion.
+- Reject incomplete, future-dated, or source data older than seven days.
+- Mark cache older than 24 hours as stale instead of silently presenting it as current.
 
-### Offline-first desktop workflow
+### Local-first and cloud synchronization
 
-- Timer and local history continue working when the network is unavailable.
-- SQLite uses WAL, foreign keys, transactions, and durable repository validation.
-- A local outbox keeps pending cloud operations retryable and idempotent.
-- Offline identity can preserve local work, but it cannot silently claim or sync cloud data.
+- Continue local work when Supabase is missing, offline, or temporarily unavailable.
+- Encrypt supported auth/session material through Electron secure storage.
+- Bootstrap an empty device before local onboarding can overwrite cloud history.
+- Pull remote changes before pushing pending local operations.
+- Preserve conflicts and let the user choose **Keep local & retry** or **Use cloud version**.
+- Use an online timer lease to reduce two authenticated devices starting simultaneously.
 
-### Cloud account and synchronization
+## Download and install on Windows
 
-- Supabase email/password authentication.
-- Google OAuth with a persisted, encrypted PKCE continuation for desktop restarts.
-- New-device cloud bootstrap runs before local onboarding can overwrite an existing workspace.
-- Pull-before-push synchronization with a durable cursor and paginated changes.
-- Retained local conflicts with explicit **Keep local & retry** and **Use cloud version** actions.
-- Timer lease acquisition and renewal for authenticated online devices.
-- RPC deadlines prevent a hanging network response from blocking future sync attempts.
+1. Download [`TimeFarm-0.2.0-Setup.exe`](https://github.com/qvinh8726/timefarm/releases/download/v0.2.0/TimeFarm-0.2.0-Setup.exe).
+2. Run the installer on Windows 10 or Windows 11 x64.
+3. Choose the installation directory when prompted.
+4. Create a local profile and start tracking work.
 
-### Native Windows experience
+Because v0.2.0 is unsigned, Windows SmartScreen may require **More info → Run anyway**. Verify the SHA-256 value published in the GitHub Release before running the installer.
 
-- Electron desktop shell with Chromium sandboxing, context isolation, web security, and no renderer Node integration.
-- Native mini timer with hidden, view-only click-through, and interactive modes.
-- Overlay position is persisted locally; stopping the overlay opens the normal earnings form.
-- Responsive dashboard, accessible modal semantics, keyboard focus styles, and reduced-motion support.
-- Vietnamese and English resource foundations with locale-aware time and date formatting.
-
-## Screens and workflow
-
-| Area | Purpose |
-| --- | --- |
-| Dashboard | Today’s work time, earnings, efficiency, sessions, goals, and configurable widgets. |
-| Projects | Project setup, payment model, status, icons, and project-level activity. |
-| History | Completed sessions, actual earnings, notes, original currencies, and safe latest-session editing. |
-| Analytics | Range-based charts, project comparisons, pace, FX context, and data-backed observations. |
-| Profile | Local account identity, country, currency, and timezone. |
-| Settings | Theme, language, mini timer mode, and local data controls. |
-
-## Quick start on Windows
+## Quick start from source
 
 ### Requirements
 
-- Windows 10/11 for the desktop target.
-- Node.js 24.x. The project uses Node’s built-in `node:sqlite` runtime.
-- pnpm 11.x, installed through Corepack.
-- Git for source development.
-
-### Install and run
-
-Open **Command Prompt** or PowerShell in the repository directory:
+- Windows 10/11 x64
+- Node.js 24.x
+- pnpm 11.x through Corepack
+- Git
 
 ```powershell
+git clone https://github.com/qvinh8726/timefarm.git
+cd timefarm
 corepack enable
-pnpm install
+pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-The development command starts Vite and Electron together. Keep the terminal open while TimeFarm is running.
+`pnpm dev` starts Vite and Electron together. A renderer-only preview is available with `pnpm dev:web`, but browser preview does not exercise Electron SQLite, secure auth storage, IPC, sync, or the native overlay.
 
-For a renderer-only browser preview:
+## Build and test
 
-```powershell
-pnpm dev:web
-```
-
-The browser preview uses localStorage and is intentionally not a substitute for Electron SQLite, secure auth storage, cloud sync, or the native overlay.
-
-### Command Prompt environment syntax
-
-If you use `cmd.exe`, use `set`, not PowerShell’s `$env:` syntax:
-
-```cmd
-set "TIMEFARM_SUPABASE_URL=https://your-project.supabase.co"
-set "TIMEFARM_SUPABASE_ANON_KEY=your-publishable-or-anon-key"
-pnpm dev
-```
-
-If you use PowerShell:
+Run all local quality gates:
 
 ```powershell
-$env:TIMEFARM_SUPABASE_URL = "https://your-project.supabase.co"
-$env:TIMEFARM_SUPABASE_ANON_KEY = "your-publishable-or-anon-key"
-pnpm dev
-```
-
-Environment variables belong to the terminal process that launches Electron. Opening a new terminal means setting them again.
-
-## Supabase setup
-
-Cloud features are optional. TimeFarm remains a local-first timer without Supabase configuration.
-
-1. Create a Supabase project.
-2. Apply the migrations in order:
-   - [`0001_workly_schema.sql`](supabase/migrations/0001_workly_schema.sql)
-   - [`0002_bootstrap_snapshot.sql`](supabase/migrations/0002_bootstrap_snapshot.sql)
-3. Configure Email authentication and Google OAuth in Supabase Auth.
-4. Set the desktop callback URL to `timefarm://auth/callback`.
-5. Add a redirect pattern that accepts the OAuth query parameters, such as `timefarm://auth/callback**` when supported by the project’s redirect syntax.
-6. Launch TimeFarm with the public Supabase URL and **publishable/anon key**.
-
-Never put a Supabase `service_role` or `sb_secret_*` key in this application, the repository, `.env.example`, a screenshot, or a public issue. The anon/publishable key is intended for client applications; database ownership and authorization must still be enforced by Supabase RLS and RPC policies.
-
-### Production configuration for the installer
-
-The installer build can bundle a local runtime configuration without committing it to Git:
-
-```powershell
-$env:TIMEFARM_SUPABASE_URL = "https://your-project.supabase.co"
-$env:TIMEFARM_SUPABASE_ANON_KEY = "your-publishable-or-anon-key"
-node scripts/prepare-runtime-config.cjs
-pnpm pack:win
-```
-
-`electron/timefarm.config.json` is ignored by Git. It is used only to provide public client configuration to the packaged desktop app. Do not put a secret/service-role key in it.
-
-## Build, test, and package
-
-Run the quality gates before sharing a build:
-
-```powershell
+pnpm format:check
 pnpm lint
+pnpm lint:css
+pnpm check:electron
+pnpm check:workflows
 pnpm test
+pnpm test:coverage
 pnpm build
+pnpm check:bundle
+pnpm audit --prod
 ```
 
-Create an x64 NSIS installer:
-
-```powershell
-pnpm pack:win
-```
-
-The installer is written to `release/TimeFarm-<version>-Setup.exe`. For an unpacked directory smoke test:
+Build and smoke an unpacked Windows app:
 
 ```powershell
 pnpm pack:win:dir
+pnpm smoke:win:packaged
 ```
 
-The public v0.1.2 installer is available on the [GitHub Releases page](https://github.com/qvinh8726/timefarm/releases/tag/v0.1.2).
+Build and smoke the NSIS installer:
+
+```powershell
+pnpm pack:win
+pnpm smoke:win:installer
+```
+
+Artifacts are written to `release/`. Build output, coverage, local cloud configuration, logs, and Codex workspace files are intentionally excluded from Git.
+
+## Optional Supabase setup
+
+TimeFarm does **not** require Supabase for local tracking. To enable authentication and synchronization:
+
+1. Create a Supabase project.
+2. Deploy the migrations in order:
+   - [`0001_workly_schema.sql`](supabase/migrations/0001_workly_schema.sql)
+   - [`0002_bootstrap_snapshot.sql`](supabase/migrations/0002_bootstrap_snapshot.sql)
+   - [`0003_atomic_workspace_claim.sql`](supabase/migrations/0003_atomic_workspace_claim.sql)
+   - [`0004_paginated_bootstrap.sql`](supabase/migrations/0004_paginated_bootstrap.sql)
+   - [`0005_optimistic_revisions.sql`](supabase/migrations/0005_optimistic_revisions.sql)
+3. Enable Email Auth and optionally Google OAuth.
+4. Add `timefarm://auth/callback**` to the accepted redirect patterns.
+5. Supply only the public project URL and publishable/anon key.
+
+Never bundle a Supabase `service_role`, `sb_secret_*`, database password, personal access token, or any other server credential. Ownership is derived from `auth.uid()` and enforced by RLS/security-definer RPCs.
+
+The repository includes a manual **Deploy Supabase migrations** GitHub workflow. Configure the `production` environment with:
+
+- `SUPABASE_ACCESS_TOKEN`
+- `SUPABASE_DB_PASSWORD`
+- `SUPABASE_PROJECT_REF`
+- `TIMEFARM_SUPABASE_URL`
+- `TIMEFARM_SUPABASE_ANON_KEY`
+
+The workflow performs a dry run, applies pending migrations, and verifies that required RPCs exist while rejecting anonymous callers.
 
 ## Architecture
 
 ```text
 React + TypeScript renderer
-        │ typed context-isolated IPC
+        │ typed, context-isolated IPC
         ▼
 Electron main process
-  ├─ CommandService: validates intent and owns IDs/timestamps
-  ├─ LocalStateRepository: SQLite/WAL, invariants, recovery, outbox
-  ├─ SupabaseAuthService: encrypted session and OAuth PKCE
-  ├─ SyncService: bootstrap, pull cursor, retry, conflicts
-  ├─ TimerLeaseService: online cross-device timer lease
-  ├─ FxService: verified reference-rate cache
-  └─ OverlayManager: native mini timer window
+  ├─ CommandService        strict intents and main-owned timestamps/IDs
+  ├─ LocalStateRepository  SQLite, WAL, migrations, recovery, outbox
+  ├─ SupabaseAuthService   encrypted session and OAuth PKCE
+  ├─ SyncService           bootstrap, pull cursor, CAS, retry, conflicts
+  ├─ TimerLeaseService     bounded online cross-device lease
+  ├─ FxService             validated reference-rate cache
+  └─ OverlayManager        native mini timer window
         │
-        ├─ workly.db (local durable state; compatibility filename)
-        └─ Supabase Auth + RLS/RPC migrations (optional cloud)
+        ├─ Local workly.db
+        └─ Optional Supabase Auth + RLS/RPC schema
 ```
 
-The internal `workly:*` IPC channels, SQL function names, migration filenames, and `workly.db` compatibility filename are retained deliberately. They are implementation identifiers and do not change the public TimeFarm brand.
+The renderer cannot access Node.js, the filesystem, database credentials, or auth tokens. Electron uses `contextIsolation`, Chromium sandboxing, strict navigation policies, trusted sender checks, and narrow preload APIs.
 
-## Security model
+Read the implementation boundaries in [`ARCHITECTURE.md`](ARCHITECTURE.md) and the reporting policy in [`SECURITY.md`](SECURITY.md).
 
-- Renderer Node integration is disabled.
-- Context isolation and Chromium sandboxing are enabled.
-- Navigation is restricted to the packaged app or the exact development origin.
-- External browser navigation is restricted to the configured Supabase origin.
-- OAuth callbacks require the exact `timefarm://auth/callback` route, a TimeFarm nonce, a Supabase flow ID, freshness, and single-use consumption.
-- Renderer commands are schema-validated in the main process; renderer-supplied account IDs, entity ownership, timestamps, and whole-state snapshots are not trusted.
-- Local auth sessions and OAuth continuation material use Electron secure storage when available.
-- Cloud writes derive ownership from `auth.uid()` and are expected to run behind Supabase RLS/security-definer RPC checks.
+## Release status and known limitations
 
-## Known limitations and release gates
+TimeFarm v0.2.0 is ready for local/offline-first beta evaluation. Before describing it as a stable production multi-device product, the project still needs:
 
-TimeFarm is runnable and tested locally, but the following still require real hosted or clean-machine verification before calling it a fully production-hardened release:
+- Hosted verification of every Supabase migration, RLS rule, RPC, Email Auth, and Google OAuth flow.
+- Competing physical-device and extended network-fault testing.
+- Windows code signing, SmartScreen reputation, upgrade/rollback testing, and an update strategy.
+- Physical screen-reader, DPI, fullscreen, multi-monitor, crash/shutdown, and clean-machine coverage.
+- Sustained FX provider outage/rate-limit monitoring.
 
-- Apply and integration-test both Supabase migrations in the intended hosted project.
-- Verify RLS, email auth, Google OAuth, bootstrap, conflict, and timer lease behavior with multiple devices.
-- Add server-side optimistic revision/CAS handling for every concurrent entity edit; current sync safety prevents several unsafe overwrites but does not eliminate every last-write-wins race.
-- Define reconciliation for two devices that work offline and create overlapping completed sessions.
-- Run Windows crash/restart, DPI, fullscreen, screen-reader, and keyboard smoke tests.
-- Add a production code-signing certificate, clean-machine installer test, upgrade test, and update policy.
-- Choose and validate a production FX provider and freshness policy.
-
-These boundaries are tracked in [`ARCHITECTURE.md`](ARCHITECTURE.md) and the issue tracker.
-
-## Troubleshooting
-
-### `pnpm` is not recognized
-
-Open Command Prompt as Administrator once and run:
-
-```cmd
-corepack enable
-pnpm --version
-```
-
-Then use a normal terminal for development.
-
-### Vite says port 5173 is in use
-
-Stop the previous `pnpm dev` process with `Ctrl+C`. If needed, find the exact process:
-
-```cmd
-netstat -ano | findstr :5173
-taskkill /PID <PID_FROM_NETSTAT> /F
-```
-
-### TimeFarm says it is offline
-
-Check that the terminal launching Electron has both `TIMEFARM_SUPABASE_URL` and `TIMEFARM_SUPABASE_ANON_KEY`. A new terminal does not inherit variables from an older terminal. Confirm that the URL and key belong to the same Supabase project and that the migrations were applied in order.
-
-### Cloud claim says `Authentication required`
-
-Update to the latest source, restart TimeFarm, and sign in again. The sync client must send the authenticated bearer token to Supabase RPC calls; an anon key alone cannot claim a cloud workspace.
-
-### Windows SmartScreen warns about the installer
-
-The current installer is unsigned. Verify that the download came from the official [TimeFarm GitHub release](https://github.com/qvinh8726/timefarm/releases), then use the production-signed build once code signing is configured.
-
-## Contributing
-
-1. Fork the repository and create a focused branch.
-2. Install dependencies with `pnpm install`.
-3. Make the smallest safe change that matches the product rules.
-4. Run `pnpm lint`, `pnpm test`, and `pnpm build`.
-5. Update the relevant product/architecture decision document when behavior changes.
-6. Open a pull request with a clear description, test results, and screenshots for UI changes.
+See [`PRIVACY.md`](PRIVACY.md), [`SUPPORT.md`](SUPPORT.md), and [`CHANGELOG.md`](CHANGELOG.md) for the current beta boundaries and release history.
 
 ## Project documentation
 
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — implementation boundaries and data flow.
-- [`assets/timefarm-avatar.png`](assets/timefarm-avatar.png) — official TimeFarm avatar and brand artwork.
-- [GitHub Issues](https://github.com/qvinh8726/timefarm/issues) — current bugs, ideas, and release gates.
-- [GitHub Actions](https://github.com/qvinh8726/timefarm/actions) — automated CI runs.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) – runtime boundaries, persistence, sync, security, and release gates.
+- [`design-system/timefarm/MASTER.md`](design-system/timefarm/MASTER.md) – UI tokens, hierarchy, responsiveness, and accessibility.
+- [`SECURITY.md`](SECURITY.md) – responsible security reporting.
+- [`PRIVACY.md`](PRIVACY.md) – local/cloud data behavior.
+- [`SUPPORT.md`](SUPPORT.md) – supported beta workflows.
+- [`CHANGELOG.md`](CHANGELOG.md) – release history.
+- [GitHub Issues](https://github.com/qvinh8726/timefarm/issues) – bugs, ideas, and roadmap.
+- [GitHub Actions](https://github.com/qvinh8726/timefarm/actions) – CI, database deployment, and release workflows.
 
-## SEO keywords
+## License
 
-Windows time tracker · offline-first time tracking app · freelancer time tracker · work hours tracker · earnings tracker · productivity analytics dashboard · project time tracking · hourly rate analytics · Electron desktop app · Supabase sync · local-first productivity software · Vietnamese and English time tracking.
+Copyright © 2026 TimeFarm contributors. This repository is currently **UNLICENSED / all rights reserved**. See [`LICENSE`](LICENSE) before copying, modifying, or redistributing the source.
+
+---
+
+TimeFarm is a Windows time tracker, offline work-hours tracker, freelancer project timer, earnings tracker, productivity analytics dashboard, hourly-rate calculator, and optional Supabase-synced Electron desktop app.

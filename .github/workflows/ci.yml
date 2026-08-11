@@ -16,16 +16,16 @@ jobs:
   quality:
     name: Lint, test, and build
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: pnpm
@@ -34,11 +34,56 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Lint
-        run: pnpm lint
+      - name: Format, lint, and type-check
+        run: |
+          pnpm format:check
+          pnpm lint
+          pnpm lint:css
+          pnpm check:electron
+          pnpm check:workflows
 
       - name: Test
-        run: pnpm test
+        run: |
+          pnpm test
+          pnpm test:coverage
 
       - name: Build renderer
-        run: pnpm build
+        run: |
+          pnpm build
+          pnpm check:bundle
+
+      - name: Package Windows application and installer
+        env:
+          TIMEFARM_SUPABASE_URL: https://ci-contract.invalid
+          TIMEFARM_SUPABASE_ANON_KEY: ci-public-anon-placeholder
+        run: pnpm pack:win
+
+      - name: Smoke-test packaged application
+        run: |
+          pnpm smoke:win:packaged
+          pnpm smoke:win:installer
+
+  database:
+    name: Replay and test Supabase migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3.0.0
+        with:
+          version: 2.113.0
+
+      - name: Start a fresh local database and replay migrations
+        run: supabase db start
+
+      - name: Lint and test schema, RLS, and RPC contracts
+        run: |
+          supabase db lint --local --level error
+          supabase test db --local
+
+      - name: Stop local Supabase services
+        if: always()
+        run: supabase stop --no-backup

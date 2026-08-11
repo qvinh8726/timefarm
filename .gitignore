@@ -2,8 +2,12 @@ node_modules/
 dist/
 release/
 release-public/
+coverage/
 *.log
 .env
 .env.*
 !.env.example
 electron/timefarm.config.json
+__pycache__/
+*.pyc
+.codex/
