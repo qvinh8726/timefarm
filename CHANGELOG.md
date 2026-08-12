@@ -3,7 +3,7 @@
 All notable changes are documented here. TimeFarm follows semantic versioning
 once a stable release line is declared; 0.x releases remain beta.
 
-## 0.2.3 - 2026-08-12
+## Unreleased — planned 0.2.3
 
 ### Production-readiness audit
 
@@ -14,11 +14,15 @@ once a stable release line is declared; 0.x releases remain beta.
 - Made sync claims durable across crashes and ambiguous timeouts, preserve edits created during an in-flight push, retry with the original idempotency key, and keep cache rebuilds from discarding unsettled operations.
 - Cancel in-flight sync before sign-out, verify encrypted session/PKCE files were actually removed, and reject mixed environment/bundled cloud credential pairs.
 - Added guarded destructive confirmations, auth-bootstrap failure isolation, fixed-priority dashboard timer behavior, responsive auth layouts, localized modal labels, sync/FX failure feedback, and keyboard-safe mobile navigation.
+- Restored Profile and Settings interaction on desktop by removing mobile-only inert state from their shared navigation, with a regression test for the account route.
+- Added migration `0008` to revoke inherited anonymous timer-lease execution while retaining authenticated desktop access.
 
 ### Verification and distribution
 
-- Passed formatting, JavaScript and CSS linting, Electron/workflow checks, 75 renderer tests, 202 Electron tests, coverage gates, the production build, bundle budgets, full-lockfile dependency audit, explicit cloud/offline packaging, 9/9 Electron fuse checks, and packaged/installer smoke tests.
-- Prepared an unsigned offline `0.2.3` installer candidate while keeping the automated cloud release blocked on hosted Supabase/OAuth verification and production secrets.
+- Passed formatting, JavaScript and CSS linting, Electron/workflow checks, 76 renderer tests, 204 Electron tests, coverage gates, the production build, bundle budgets, full-lockfile dependency audit, explicit cloud/offline packaging, 9/9 Electron fuse checks, and packaged/installer smoke tests.
+- Freshly replayed migrations `0001`–`0008`, passed 105 pgTAP assertions, and passed 6/6 hosted RPC existence/unauthenticated-denial probes against production.
+- Configured Google OAuth as External / In production with exact provider and desktop callbacks; production packaging uses a publishable desktop key and legacy authentication headers are disabled.
+- Prepared a cloud-enabled, unsigned Windows x64 prerelease candidate. Installed Google PKCE, authenticated sync/lease round-trips, and physical multi-device validation remain release gates.
 
 ## 0.2.2 - 2026-08-12
 

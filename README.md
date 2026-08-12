@@ -1,4 +1,4 @@
-# TimeFarm — Offline-First Time Tracker & Earnings Analytics for Windows
+# TimeFarm — Windows Time Tracker, Project Timer & Earnings Analytics
 
 <p align="center">
   <img src="assets/timefarm-avatar.png" width="168" alt="TimeFarm offline-first Windows time tracker logo" />
@@ -41,7 +41,16 @@ The timer and work history do not depend on an internet connection. The public v
 
 ![TimeFarm productivity and freelancer earnings analytics with trends, project ranking, and observations](docs/design-exploration/production-analytics-populated.png)
 
-## What’s new in v0.2.2
+## What’s coming in v0.2.3
+
+- **Cloud-enabled Windows candidate:** the next unsigned x64 prerelease packages only the public Supabase origin and a dedicated publishable desktop key; it never bundles a `service_role`, secret key, database password, or personal access token.
+- **Production Supabase verification:** migrations `0001` through `0008` are deployed, fresh CI replay passes 105 pgTAP assertions, and all 6 hosted RPC existence/unauthenticated-denial probes pass.
+- **Google OAuth production configuration:** the Google provider is External / In production with exact provider and desktop callbacks. Installed-app PKCE, authenticated sync round-trips, and physical multi-device behavior remain release gates rather than assumed guarantees.
+- **Desktop navigation hotfix:** Profile and Settings remain interactive on desktop while the responsive **More** menu stays CSS-hidden when closed on mobile.
+
+The latest published download remains v0.2.2 until every v0.2.3 runtime gate passes and the protected GitHub release workflow publishes the new installer.
+
+## What shipped in v0.2.2
 
 - **Quiet Instrument redesign:** a focused edge-to-edge Windows shell, measured timer display, open ledgers, restrained color, responsive light/dark themes, and a matching native mini timer.
 - **Non-blocking timer and sync:** local timer commands commit without waiting for network work; cloud synchronization is coalesced separately and lease renewal remains independent.
@@ -111,7 +120,7 @@ When configured by an operator, the source includes:
 - Per-entity optimistic revisions and explicit **Keep local** / **Use cloud** conflict choices.
 - An online timer lease that reduces simultaneous starts across authenticated devices.
 
-The current source treats Google sign-in and Supabase synchronization as first-class desktop capabilities while keeping the timer offline-first. They are **not enabled in the downloadable v0.2.2 installer** because that artifact contains no public Supabase runtime configuration. A future cloud-enabled release must pass the hosted contract, exact OAuth callback, explicit artifact-mode, unsigned-installer, and physical multi-device gates described below.
+The current source treats Google sign-in and Supabase synchronization as first-class desktop capabilities while keeping the timer offline-first. They are **not enabled in the downloadable v0.2.2 installer** because that artifact contains no public Supabase runtime configuration. The v0.2.3 candidate has passed fresh database replay and hosted denial-boundary checks; installed Google PKCE, authenticated data round-trips, and competing physical devices still require end-to-end validation before publication.
 
 ## Download and install on Windows
 
@@ -199,14 +208,22 @@ Supabase is not required for local time tracking. To develop or operate cloud si
    - [`0005_optimistic_revisions.sql`](supabase/migrations/0005_optimistic_revisions.sql)
    - [`0006_production_hardening.sql`](supabase/migrations/0006_production_hardening.sql)
    - [`0007_sync_contract_and_retention.sql`](supabase/migrations/0007_sync_contract_and_retention.sql)
+   - [`0008_timer_lease_privileges.sql`](supabase/migrations/0008_timer_lease_privileges.sql)
 3. Enable Email Auth and, if needed, Google OAuth.
-4. Add `timefarm://auth/callback?timefarm_state=**` to the accepted redirect URLs. The fixed scheme, host, path, and query-key scope the allowlist to TimeFarm; `**` is required only for the per-login nonce appended by the desktop PKCE flow.
+4. Configure both OAuth hops exactly:
+   - Google authorized redirect URI: `https://<project-ref>.supabase.co/auth/v1/callback`
+   - Supabase additional redirect URL: `timefarm://auth/callback?timefarm_state=**`
+
+   The fixed desktop scheme, host, path, and query-key scope the allowlist to TimeFarm; `**` is required only for the per-login nonce appended by the desktop PKCE flow. The production project uses `https://kyjswjvuveiiwuysobaa.supabase.co/auth/v1/callback` as its Google redirect URI.
+
 5. Set the project URL and publishable/anon client key in the terminal that launches or packages TimeFarm. `.env.example` documents the accepted names, but Electron does not automatically load `.env` files:
 
    ```dotenv
    TIMEFARM_SUPABASE_URL=https://your-project.supabase.co
    TIMEFARM_SUPABASE_ANON_KEY=your-publishable-or-anon-key
    ```
+
+   `TIMEFARM_SUPABASE_ANON_KEY` is retained as a compatibility variable name. Production uses a dedicated `sb_publishable_*` desktop key; legacy anon/service-role API-key headers are disabled.
 
 6. Validate the hosted contract with `pnpm check:cloud`, then test authentication, conflict handling, retention, and competing physical devices before distribution.
 
@@ -239,7 +256,7 @@ pnpm check:db
 pnpm test:db
 ```
 
-The release workstation could not run these commands because its local Supabase stack was unavailable. GitHub CI independently replayed migrations `0001` through `0007` on a fresh database, found no schema lint errors, and passed both pgTAP files (102 assertions). The hosted `pnpm check:cloud` check still could not run because no hosted URL or public key was supplied, so this is not presented as hosted Auth or multi-device verification.
+The release workstation could not run these commands because its local Supabase stack was unavailable. GitHub CI independently replayed migrations `0001` through `0008` on a fresh database, found no schema lint errors, and passed both pgTAP files (105 assertions). The production migration ledger is current through `0008`, and `pnpm check:cloud` passed all 6 hosted RPC existence/unauthenticated-denial probes. This does not verify Google sign-in, authenticated sync/data round-trips, conflict resolution, retention pruning, or physical multi-device timer leases.
 
 Build an unpacked offline Windows application and run its smoke test:
 
@@ -303,7 +320,8 @@ Use [GitHub Issues](https://github.com/qvinh8726/timefarm/issues) for reproducib
 - [`SECURITY.md`](SECURITY.md) — responsible vulnerability reporting
 - [`SUPPORT.md`](SUPPORT.md) — supported beta workflows
 - [`design-system/timefarm/MASTER.md`](design-system/timefarm/MASTER.md) — UI tokens, hierarchy, responsiveness, and accessibility
-- [`docs/final-hardening-report.md`](docs/final-hardening-report.md) — v0.2.2 hardening evidence and remaining risks
+- [`docs/final-hardening-report.md`](docs/final-hardening-report.md) — v0.2.3 hardening evidence and remaining risks
+- [`docs/releases/v0.2.3.md`](docs/releases/v0.2.3.md) — v0.2.3 candidate scope, verification, and release gates
 
 ## License
 

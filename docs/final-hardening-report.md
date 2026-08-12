@@ -1,8 +1,10 @@
 # TimeFarm final hardening report
 
-Date: 2026-08-12
-Base revision reviewed: `4fc7381fe2ad6a4d0f3197bc66a52a88099db2b8`
-Release candidate: `0.2.3`
+Updated: 2026-08-13
+Audit baseline: `4fc7381fe2ad6a4d0f3197bc66a52a88099db2b8`
+Production migration/release hardening source: `df93fdd51cebd81c9adb11f91489dcf553e80650`
+Desktop navigation hotfix: `09c6e63`
+Release candidate: `0.2.3` (not yet published)
 
 ## 1. P0 fixed
 
@@ -33,6 +35,8 @@ Release candidate: `0.2.3`
   `ActionResult`, disable duplicate actions, and expose localized live errors.
 - Packaging accepts publishable keys or legacy `role=anon` JWTs only, and
   rejects secret/service-role/malformed keys.
+- Production uses a dedicated publishable desktop key, and legacy anon/
+  service-role API-key headers are disabled at the hosted gateway.
 
 ## 3. Medium fixed
 
@@ -55,6 +59,8 @@ Release candidate: `0.2.3`
   overflow.
 - Expanded renderer/Electron coverage scope and preload bridge verification.
 - Added Electron permission/webview/navigation/trusted-sender defense in depth.
+- Removed mobile-only `inert`/`aria-hidden` state from the shared secondary
+  navigation so Profile and Settings remain interactive on desktop.
 - Added `.gitattributes`, aligned Node/type configs, refreshed support/privacy/
   architecture/release documentation, and made device-wipe wording truthful.
 
@@ -65,7 +71,10 @@ Release candidate: `0.2.3`
 - `0007_sync_contract_and_retention.sql`: final sync contract retirement,
   pagination/retention watermark, safe pruning, and additional parity/index
   changes.
-- pgTAP plans match their assertions: schema/security 58 and behavior/RLS 44.
+- `0008_timer_lease_privileges.sql`: removes inherited `PUBLIC` and direct
+  `anon` execution from the timer-lease RPC while retaining `authenticated`.
+- pgTAP plans match their assertions: schema/security 61 and behavior/RLS 44,
+  for 105 assertions total.
 
 ## 5. Concurrency architecture changes
 
@@ -101,10 +110,10 @@ results so late responses cannot repopulate cleared state.
 
 ## 8. Added or changed tests
 
-- Renderer: 11 files / 75 tests after redesign, including money invariants,
-  live overlap, validation, state serialization, accessibility, Analytics, and
-  inline wipe confirmation.
-- Electron: 202 tests covering timer timestamps, slow-sync isolation, sync
+- Renderer: 11 files / 76 tests after the desktop navigation regression test,
+  including money invariants, live overlap, validation, state serialization,
+  accessibility, Analytics, and inline wipe confirmation.
+- Electron: 204 tests covering timer timestamps, slow-sync isolation, sync
   coalescing, leases, repository invariants, conflicts, wipe/recovery, auth
   timeouts, client-key validation, navigation/security, preload bridges, and the
   Quiet Instrument overlay.
@@ -121,71 +130,76 @@ Passed locally:
 - `pnpm lint:css`
 - `pnpm check:electron`
 - `pnpm check:workflows`
-- `pnpm test` — Renderer 75/75; Electron 202/202
-- `pnpm test:coverage` — Renderer 62.56% lines; domain 94.73% lines;
-  Electron 89.09% lines / 73.95% branches / 93.56% functions
+- `pnpm test` — Renderer 76/76; Electron 204/204
+- `pnpm test:coverage` — Renderer 63.29% lines; domain 95.66% lines;
+  Electron 89.03% lines / 73.91% branches / 93.56% functions
 - `pnpm build`
-- `pnpm check:bundle` — 8 chunks, largest 194,101 B, total 610,452 B
+- `pnpm check:bundle` — 8 chunks, largest 194,055 B, total 610,406 B
 - `pnpm audit --audit-level high` — no known vulnerabilities
 
-Not locally executable:
+Not locally executable on the release workstation:
 
 - `pnpm test:db` reached `127.0.0.1:54322` and failed with `ECONNREFUSED`
   because Docker/Supabase local is not running. No local pgTAP pass is claimed.
-- `pnpm check:cloud` correctly refused to run without a hosted Supabase URL and
-  public key. No hosted sync/auth verification is claimed.
+  Passed in GitHub CI on the pushed release source:
 
-Passed in GitHub CI on the pushed release source:
-
-- Fresh database replay of migrations `0001` through `0007`.
+- Fresh database replay of migrations `0001` through `0008`.
 - `supabase db lint --local --level error` — no schema errors.
-- `supabase test db --local` — 2 files / 102 assertions, all successful.
+- `supabase test db --local` — 2 files / 105 assertions, all successful.
 - Windows quality, build, packaging, and installer smoke jobs.
 - CodeQL JavaScript/TypeScript analysis.
 
+Passed against the hosted production project:
+
+- Production migration deployment confirmed the remote ledger is current
+  through `0008`.
+- `pnpm check:cloud` passed 6/6 RPC existence and unauthenticated-denial probes.
+  These negative probes do not claim authenticated CRUD/sync or OAuth success.
+
 ## 10. Packaging results
 
-- Cloud-mode QA build with a public non-production placeholder: pass; packaged
-  smoke verified the signed-out authentication form and Google/email entry
-  points. This is not a production credential or hosted-cloud verification.
+- A cloud-mode installer built from `df93fdd` with production public
+  configuration passed explicit ASAR mode, 9/9 Electron fuse, packaged-app,
+  install/render/uninstall, cleanup, and `NotSigned` checks.
+- That pre-hotfix installer was rejected after runtime QA found Profile and
+  Settings trapped beneath a desktop `inert` ancestor. It will not be released.
+- The hotfix at `09c6e63` adds a red/green regression test and removes the
+  shared inert state. The final installer identity is intentionally omitted
+  until the tagged workflow rebuilds and publishes the exact artifact.
 - Offline `pnpm pack:win:offline`: pass with an explicit offline marker inside
   the final ASAR and 9/9 fuse checks.
 - `pnpm smoke:win:packaged` and `pnpm smoke:win:installer`: pass for both modes;
   each packaged app rendered its expected entry flow, and each installer
   installed, rendered, uninstalled, and cleaned up.
-- Final offline installer candidate: `release/TimeFarm-0.2.3-Setup.exe`,
-  112,954,349 bytes, SHA-256
-  `6c4cb7cd9251dcdd606cf779268bfb2918a5b23c14628a80ee26fbf06b17d335`.
-  Authenticode reports `NotSigned`, matching the release disclosure.
-- Real release `pnpm pack:win` without public cloud configuration correctly
-  hard-failed. The v0.x production-environment workflow requires that public
+- The v0.x production-environment workflow requires public cloud
   configuration, disables certificate discovery, and rejects the installer
   unless Authenticode reports `NotSigned`.
 
 ## 11. External actions still required
 
-Repository owner/admin must:
+Before publication:
 
-1. Run `pnpm check:cloud` against the real hosted project; fresh migration
-   replay, lint, and pgTAP (58 + 44 assertions) already pass in GitHub CI.
-2. Configure the GitHub `production` environment secrets and required reviewer;
-   enable branch/ruleset protection requiring CI, database, security, and
-   unsigned prerelease checks.
-3. Enable GitHub private vulnerability reporting, code scanning, dependency
-   graph/alerts, and secret scanning/push protection in repository settings.
+1. Validate the complete installed-app Google PKCE flow: system-browser login,
+   exact `timefarm://` callback, app restart, cancellation, expiry, and provider
+   error handling.
+2. Validate workspace claim/link plus authenticated sync push/pull on production
+   without wiping existing local data. Test conflicts and competing timer leases
+   on physical devices before making a multi-device guarantee.
+3. Enable branch/ruleset protection requiring CI, database, and security checks;
+   production environment secrets are already configured.
 4. Publish only an unsigned `v0.*` prerelease, retain the visible Unknown
    Publisher/SmartScreen disclosure, and verify its SHA-256 plus SBOM and
    build-provenance attestations.
    Code signing and reputation building are deferred to a future stable line.
-5. Validate Email Auth/Google OAuth redirects, multi-device conflict/lease
-   behavior, and long offline-window retention on physical devices.
 
 ## 12. Remaining known risks
 
-- Hosted Supabase behavior is verified only by static/unit/database contract
-  tests in this environment; real credentials were intentionally unavailable.
+- Production migrations and the six unauthenticated RPC denial boundaries are
+  hosted-verified. Authenticated CRUD/sync, conflict resolution, retention
+  pruning, real-provider sign-in, concurrent hosted races, and physical
+  multi-device lease behavior are not yet verified.
 - SQLite/database concurrency tests cover repository and SQL contracts, but a
-  true two-connection hosted/Postgres race run still depends on Docker/CI.
+  true competing-client hosted/Postgres race remains unverified.
 - Clean-machine unsigned upgrade/rollback, physical screen readers, multi-monitor,
   high-DPI Windows scaling, crash/power-loss, and extended provider/network
   outage testing remain external release validation.

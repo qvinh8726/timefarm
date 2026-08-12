@@ -6,6 +6,7 @@ import {
   fireEvent,
   render,
   screen,
+  within,
   waitFor,
 } from "@testing-library/react";
 import axe from "axe-core";
@@ -274,6 +275,53 @@ describe("mutation feedback and serialization", () => {
       "Choose an end time that is not in the future.",
     );
     expect(onComplete).not.toHaveBeenCalled();
+  });
+});
+
+describe("workspace navigation", () => {
+  it("keeps desktop account navigation interactive while the mobile menu is closed", async () => {
+    window.worklyDesktop = {
+      loadState: vi.fn().mockResolvedValue(readyState()),
+      getAuthStatus: vi.fn().mockResolvedValue({
+        configured: false,
+        authenticated: false,
+        user: null,
+      }),
+      onAuthChanged: vi.fn(() => () => {}),
+      onStateChanged: vi.fn(() => () => {}),
+      getSyncSummary: vi.fn().mockResolvedValue({
+        queued: 0,
+        failed: 0,
+        conflicts: 0,
+      }),
+    } as unknown as NonNullable<Window["worklyDesktop"]>;
+
+    const { container } = render(
+      <AuthProvider>
+        <AppStoreProvider>
+          <App />
+        </AppStoreProvider>
+      </AuthProvider>,
+    );
+
+    const accountNavigation = await waitFor(() => {
+      const navigation =
+        container.querySelector<HTMLElement>("#mobile-more-menu");
+      expect(navigation).not.toBeNull();
+      return navigation!;
+    });
+
+    expect(accountNavigation).not.toHaveAttribute("inert");
+    expect(accountNavigation).not.toHaveAttribute("aria-hidden");
+    const accountControls = within(accountNavigation);
+    expect(
+      accountControls.getByRole("button", { name: "Settings" }),
+    ).toBeInTheDocument();
+    fireEvent.click(accountControls.getByRole("button", { name: "Profile" }));
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Profile" }),
+    ).toBeInTheDocument();
   });
 });
 
