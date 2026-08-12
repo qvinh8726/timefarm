@@ -4,6 +4,10 @@ const path = require("node:path");
 const test = require("node:test");
 
 const migrationDirectory = path.join(__dirname, "..", "supabase", "migrations");
+const localSupabaseConfiguration = fs.readFileSync(
+  path.join(__dirname, "..", "supabase", "config.toml"),
+  "utf8",
+);
 const migrationFiles = fs
   .readdirSync(migrationDirectory)
   .filter((name) => name.endsWith(".sql"))
@@ -25,6 +29,20 @@ test("keeps Supabase migrations contiguous and ordered", () => {
     "0006_production_hardening.sql",
     "0007_sync_contract_and_retention.sql",
   ]);
+});
+
+test("local Supabase auth accepts the exact desktop OAuth callback", () => {
+  const redirectMatch = localSupabaseConfiguration.match(
+    /^additional_redirect_urls\s*=\s*\[(.*)\]\s*$/m,
+  );
+  assert.ok(redirectMatch, "Supabase local auth redirect allowlist is missing");
+  const redirects = [...redirectMatch[1].matchAll(/"([^"]+)"/g)].map(
+    (match) => match[1],
+  );
+  assert.ok(
+    redirects.includes("timefarm://auth/callback?timefarm_state=**"),
+    "Supabase local auth must allow only TimeFarm's callback with its dynamic state query",
+  );
 });
 
 test("keeps ownership policies and privileged RPCs bound to auth.uid()", () => {

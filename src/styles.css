@@ -16,6 +16,15 @@
   * {
     box-sizing: border-box;
   }
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
   body {
     margin: 0;
     min-width: 320px;
@@ -4023,6 +4032,47 @@
     .icon-button {
       min-width: 40px;
       min-height: 40px;
+    }
+  }
+
+  @media (max-width: 870px) {
+    .auth-shell {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .auth-brand-panel {
+      display: none;
+    }
+    .auth-form-wrap {
+      min-height: 100vh;
+      padding-inline: clamp(22px, 7vw, 58px);
+    }
+    .auth-form {
+      width: min(100%, 500px);
+      margin: auto;
+    }
+  }
+
+  @media (max-width: 620px) {
+    .auth-form-wrap {
+      padding-inline: 22px;
+    }
+    .auth-tabs button,
+    .language-toggle button,
+    .auth-form .button,
+    .onboarding-form .button,
+    .onboarding-form input,
+    .onboarding-form select {
+      min-height: 44px;
+    }
+    .dashboard-heading-actions .button,
+    .sync-pill,
+    .timer-card .button,
+    .goal-row .text-button,
+    .goals-card .text-button,
+    .goals-card .icon-button,
+    .goals-card .mini-remove {
+      min-width: 44px;
+      min-height: 44px;
     }
   }
 

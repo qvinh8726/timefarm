@@ -52,14 +52,11 @@ jobs:
           pnpm build
           pnpm check:bundle
 
-      - name: Audit production dependencies
-        run: pnpm audit --prod --audit-level high
+      - name: Audit the complete release lockfile
+        run: pnpm audit --audit-level high
 
       - name: Package Windows application and installer
-        env:
-          TIMEFARM_SUPABASE_URL: https://ci-contract.invalid
-          TIMEFARM_SUPABASE_ANON_KEY: sb_publishable_ci_public_placeholder
-        run: pnpm pack:win
+        run: pnpm pack:win:offline
 
       - name: Smoke-test packaged application
         run: |

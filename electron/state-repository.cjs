@@ -8,7 +8,7 @@ const {
 const { goalTargetIssue } = require("./goal-validation.cjs");
 
 const APP_STATE_VERSION = 1;
-const LOCAL_SCHEMA_VERSION = 4;
+const LOCAL_SCHEMA_VERSION = 5;
 const PROJECT_STATUSES = new Set(["active", "paused", "completed"]);
 const SESSION_STATUSES = new Set(["running", "paused", "completed"]);
 const SYNC_STATUSES = new Set(["local", "queued", "synced", "error"]);
@@ -1035,8 +1035,13 @@ class LocalStateRepository {
     if (userTableCount === 0) return undefined;
     const backupPath = `${this.databasePath}.pre-v${version}.backup`;
     if (fs.existsSync(backupPath)) return backupPath;
-    this.db.prepare("VACUUM INTO ?").run(backupPath);
+    this.createRecoverySnapshot(backupPath);
     return backupPath;
+  }
+
+  createRecoverySnapshot(destinationPath) {
+    this.db.prepare("VACUUM INTO ?").run(destinationPath);
+    return destinationPath;
   }
 
   migrate() {
@@ -1233,6 +1238,25 @@ class LocalStateRepository {
             "  PRIMARY KEY (account_id, entity_type, entity_id),",
             "  CHECK (remote_revision >= 0)",
             ");",
+          ].join("\n"),
+        );
+      });
+      applyMigration(5, () => {
+        this.db.exec(
+          [
+            "ALTER TABLE sync_outbox RENAME TO sync_outbox_legacy;",
+            "CREATE TABLE sync_outbox (",
+            "  id TEXT PRIMARY KEY, account_id TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL,",
+            "  operation TEXT NOT NULL, idempotency_key TEXT NOT NULL UNIQUE, payload_json TEXT NOT NULL,",
+            "  created_at TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, next_attempt_at TEXT, status TEXT NOT NULL DEFAULT 'queued',",
+            "  expected_revision INTEGER CHECK (expected_revision IS NULL OR expected_revision >= 0),",
+            "  CHECK (operation IN ('upsert', 'delete')), CHECK (status IN ('queued', 'in_flight', 'error', 'synced')), CHECK (attempts >= 0)",
+            ");",
+            "INSERT INTO sync_outbox (id, account_id, entity_type, entity_id, operation, idempotency_key, payload_json, created_at, attempts, last_error, next_attempt_at, status, expected_revision)",
+            "SELECT id, account_id, entity_type, entity_id, operation, idempotency_key, payload_json, created_at, attempts, last_error, next_attempt_at, status, expected_revision FROM sync_outbox_legacy;",
+            "DROP TABLE sync_outbox_legacy;",
+            "CREATE INDEX idx_outbox_status ON sync_outbox(status, created_at);",
+            "CREATE INDEX idx_outbox_entity_pending ON sync_outbox(account_id, entity_type, entity_id, status);",
           ].join("\n"),
         );
       });
@@ -1780,7 +1804,7 @@ class LocalStateRepository {
       );
     const pending = this.db
       .prepare(
-        "SELECT 1 AS present FROM sync_outbox WHERE account_id = ? AND status IN ('queued', 'error') LIMIT 1",
+        "SELECT 1 AS present FROM sync_outbox WHERE account_id = ? AND status IN ('queued', 'in_flight', 'error') LIMIT 1",
       )
       .get(account.id);
     const conflict = this.db
@@ -1802,6 +1826,11 @@ class LocalStateRepository {
     );
     const account = state.account;
     const currentAccount = this.getAccount();
+    if (replaceExisting && !currentAccount)
+      fail(
+        "CACHE_REBUILD_REQUIRES_LOCAL_ACCOUNT",
+        "A linked local cache is required before it can be rebuilt from cloud.",
+      );
     if (currentAccount && !replaceExisting)
       fail(
         "BOOTSTRAP_REQUIRES_EMPTY_LOCAL_STATE",
@@ -3154,6 +3183,18 @@ class LocalStateRepository {
       change.entityType,
       change.entityId,
     );
+    const localRevision = this.getEntityRevision(
+      accountId,
+      change.entityType,
+      localEntityId,
+    );
+    if (
+      change.remoteRevision !== undefined &&
+      localRevision !== null &&
+      change.remoteRevision <= localRevision
+    ) {
+      return { applied: 0, conflicts: 0 };
+    }
     const localPayload = this.localCanonicalEntity(
       accountId,
       change.entityType,
@@ -3442,7 +3483,7 @@ class LocalStateRepository {
   getSyncSummary() {
     const queued = this.db
       .prepare(
-        "SELECT COUNT(*) AS total FROM sync_outbox WHERE status = 'queued'",
+        "SELECT COUNT(*) AS total FROM sync_outbox WHERE status IN ('queued', 'in_flight')",
       )
       .get().total;
     const failed = this.db
@@ -3469,6 +3510,7 @@ class LocalStateRepository {
           "FROM sync_outbox",
           "WHERE (status = 'queued' OR (status = 'error' AND (next_attempt_at IS NULL OR next_attempt_at <= ?)))",
           "AND NOT EXISTS (SELECT 1 FROM sync_conflicts conflict WHERE conflict.account_id = sync_outbox.account_id AND conflict.entity_type = sync_outbox.entity_type AND conflict.entity_id = sync_outbox.entity_id AND conflict.resolution = 'open')",
+          "AND NOT EXISTS (SELECT 1 FROM sync_outbox predecessor WHERE predecessor.account_id = sync_outbox.account_id AND predecessor.entity_type = sync_outbox.entity_type AND predecessor.entity_id = sync_outbox.entity_id AND predecessor.status = 'in_flight')",
           // Referentially dependent operations can share a timestamp or be
           // requeued after an account claim.  Preserve a safe cloud order rather
           // than allowing a dashboard preference or payment to reach the server
@@ -3497,30 +3539,112 @@ class LocalStateRepository {
       }));
   }
 
-  markOperationSynced(operationId, remoteRevision) {
-    const operation = this.db
+  getInFlightOperations(limit = 50) {
+    const safeLimit = Number.isInteger(limit)
+      ? Math.max(1, Math.min(500, limit))
+      : 50;
+    return this.db
       .prepare(
-        "SELECT id, account_id, entity_type, entity_id FROM sync_outbox WHERE id = ?",
+        [
+          "SELECT id, account_id, entity_type, entity_id, operation, idempotency_key, payload_json, created_at, attempts, last_error, next_attempt_at, status, expected_revision",
+          "FROM sync_outbox",
+          "WHERE status = 'in_flight' AND (next_attempt_at IS NULL OR next_attempt_at <= ?)",
+          "ORDER BY CASE entity_type WHEN 'account' THEN 0 WHEN 'project' THEN 1 WHEN 'work_session' THEN 2 WHEN 'payment' THEN 3 WHEN 'goal' THEN 4 WHEN 'preferences' THEN 5 ELSE 6 END, created_at ASC, rowid ASC LIMIT ?",
+        ].join(" "),
       )
-      .get(operationId);
-    if (!operation) return false;
-    this.db
-      .prepare(
-        "UPDATE sync_outbox SET status = 'synced', last_error = NULL, next_attempt_at = NULL WHERE id = ?",
-      )
-      .run(operationId);
-    if (remoteRevision !== undefined)
-      this.setEntityRevision(
-        operation.account_id,
-        operation.entity_type,
-        operation.entity_id,
-        remoteRevision,
-      );
-    this.markEntityStatusIfSettled(operation, "synced");
-    return true;
+      .all(new Date().toISOString(), safeLimit)
+      .map((row) => ({
+        id: row.id,
+        accountId: row.account_id,
+        entityType: row.entity_type,
+        entityId: row.entity_id,
+        operation: row.operation,
+        idempotencyKey: row.idempotency_key,
+        payload: parseJson(row.payload_json, {}),
+        createdAt: row.created_at,
+        attempts: row.attempts,
+        lastError: row.last_error ?? undefined,
+        nextAttemptAt: row.next_attempt_at ?? undefined,
+        status: row.status,
+        expectedRevision:
+          row.expected_revision === null
+            ? undefined
+            : Number(row.expected_revision),
+      }));
   }
 
-  markOperationFailed(operationId, error) {
+  hasInFlightOperations() {
+    return Boolean(
+      this.db
+        .prepare(
+          "SELECT 1 AS present FROM sync_outbox WHERE status = 'in_flight' LIMIT 1",
+        )
+        .get(),
+    );
+  }
+
+  claimOperation(operationId) {
+    const result = this.db
+      .prepare(
+        "UPDATE sync_outbox SET status = 'in_flight' WHERE id = ? AND status IN ('queued', 'in_flight', 'error')",
+      )
+      .run(operationId);
+    return result.changes === 1;
+  }
+
+  markOperationSynced(operationId, remoteRevision) {
+    this.db.exec("SAVEPOINT sync_operation_ack");
+    try {
+      const operation = this.db
+        .prepare(
+          "SELECT id, account_id, entity_type, entity_id FROM sync_outbox WHERE id = ?",
+        )
+        .get(operationId);
+      if (!operation) {
+        this.db.exec("RELEASE sync_operation_ack");
+        return false;
+      }
+      this.db
+        .prepare(
+          "UPDATE sync_outbox SET status = 'synced', last_error = NULL, next_attempt_at = NULL WHERE id = ?",
+        )
+        .run(operationId);
+      if (remoteRevision !== undefined) {
+        const revision = this.setEntityRevision(
+          operation.account_id,
+          operation.entity_type,
+          operation.entity_id,
+          remoteRevision,
+        );
+        this.db
+          .prepare(
+            [
+              "UPDATE sync_outbox SET expected_revision = ?",
+              "WHERE account_id = ? AND entity_type = ? AND entity_id = ?",
+              "AND status IN ('queued', 'error')",
+              "AND (expected_revision IS NULL OR expected_revision < ?)",
+            ].join(" "),
+          )
+          .run(
+            revision,
+            operation.account_id,
+            operation.entity_type,
+            operation.entity_id,
+            revision,
+          );
+      }
+      this.markEntityStatusIfSettled(operation, "synced");
+      this.db.exec("RELEASE sync_operation_ack");
+      return true;
+    } catch (error) {
+      this.db.exec(
+        "ROLLBACK TO sync_operation_ack; RELEASE sync_operation_ack;",
+      );
+      throw error;
+    }
+  }
+
+  markOperationFailed(operationId, error, options = {}) {
     const operation = this.db
       .prepare(
         "SELECT id, account_id, entity_type, entity_id, attempts, status FROM sync_outbox WHERE id = ?",
@@ -3530,11 +3654,33 @@ class LocalStateRepository {
     const attempts = Number(operation.attempts) + 1;
     const backoffMs = Math.min(300000, 2 ** Math.min(attempts, 8) * 1000);
     const nextAttemptAt = new Date(Date.now() + backoffMs).toISOString();
+    if (operation.status === "in_flight" && options.uncertain === false) {
+      const successor = this.db
+        .prepare(
+          [
+            "SELECT 1 AS present FROM sync_outbox",
+            "WHERE account_id = ? AND entity_type = ? AND entity_id = ?",
+            "AND status IN ('queued', 'error') LIMIT 1",
+          ].join(" "),
+        )
+        .get(operation.account_id, operation.entity_type, operation.entity_id);
+      if (successor) {
+        this.db
+          .prepare("DELETE FROM sync_outbox WHERE id = ?")
+          .run(operationId);
+        return true;
+      }
+    }
+    const nextStatus =
+      operation.status === "in_flight" && options.uncertain !== false
+        ? "in_flight"
+        : "error";
     this.db
       .prepare(
-        "UPDATE sync_outbox SET status = 'error', attempts = ?, last_error = ?, next_attempt_at = ? WHERE id = ?",
+        "UPDATE sync_outbox SET status = ?, attempts = ?, last_error = ?, next_attempt_at = ? WHERE id = ?",
       )
       .run(
+        nextStatus,
         attempts,
         asString(error, "Sync failed").slice(0, 1000),
         nextAttemptAt,
@@ -3548,7 +3694,7 @@ class LocalStateRepository {
         ].join(" "),
       )
       .get(operation.account_id, operation.entity_type, operation.entity_id);
-    if (latest?.id === operationId)
+    if (nextStatus === "error" && latest?.id === operationId)
       this.setEntitySyncStatus(operation, "error");
     return true;
   }

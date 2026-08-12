@@ -16,22 +16,42 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production
-    env:
-      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-      SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
-      TIMEFARM_SUPABASE_URL: ${{ secrets.TIMEFARM_SUPABASE_URL }}
-      TIMEFARM_SUPABASE_ANON_KEY: ${{ secrets.TIMEFARM_SUPABASE_ANON_KEY }}
     steps:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Require deployment commit on master
+        run: |
+          test "$GITHUB_REF" = "refs/heads/master"
+          git fetch --no-tags origin "+refs/heads/master:refs/remotes/origin/master"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/master
 
       - name: Set up Supabase CLI
         uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3.0.0
         with:
           version: 2.113.0
 
+      - name: Start a fresh local database and replay migrations
+        run: supabase db start
+
+      - name: Lint and test schema, RLS, and RPC contracts
+        run: |
+          supabase db lint --local --level error
+          supabase test db --local
+
+      - name: Stop local Supabase services
+        if: success() || failure()
+        run: supabase stop --no-backup
+
       - name: Require production migration credentials
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          TIMEFARM_SUPABASE_URL: ${{ secrets.TIMEFARM_SUPABASE_URL }}
+          TIMEFARM_SUPABASE_ANON_KEY: ${{ secrets.TIMEFARM_SUPABASE_ANON_KEY }}
         run: |
           test -n "$SUPABASE_ACCESS_TOKEN"
           test -n "$SUPABASE_DB_PASSWORD"
@@ -40,13 +60,28 @@ jobs:
           test -n "$TIMEFARM_SUPABASE_ANON_KEY"
 
       - name: Link production project
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
         run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
 
       - name: Preview pending migrations
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
         run: supabase db push --dry-run
 
       - name: Apply pending migrations
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
         run: supabase db push
 
       - name: Verify hosted RPC contract
+        env:
+          TIMEFARM_SUPABASE_URL: ${{ secrets.TIMEFARM_SUPABASE_URL }}
+          TIMEFARM_SUPABASE_ANON_KEY: ${{ secrets.TIMEFARM_SUPABASE_ANON_KEY }}
         run: node scripts/check-cloud-contract.cjs

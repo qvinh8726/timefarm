@@ -173,7 +173,7 @@ describe("Account pages", () => {
     expect(testContext.rebuildLocalCache).toHaveBeenCalledOnce();
   });
 
-  it("requires a typed browser-preview confirmation before wiping local data", async () => {
+  it("requires a typed confirmation before wiping local data", async () => {
     const user = userEvent.setup();
     render(<SettingsPage />);
 
@@ -191,5 +191,19 @@ describe("Account pages", () => {
     await waitFor(() =>
       expect(testContext.resetLocalData).toHaveBeenCalledOnce(),
     );
+  });
+
+  it("requires the same typed confirmation in the desktop app", async () => {
+    const user = userEvent.setup();
+    window.worklyDesktop = {
+      resetLocalData: vi.fn(),
+    } as unknown as NonNullable<Window["worklyDesktop"]>;
+    render(<SettingsPage />);
+
+    await user.click(screen.getByRole("button", { name: "Wipe this device" }));
+    expect(testContext.resetLocalData).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("textbox", { name: "Type WIPE to confirm." }),
+    ).toBeInTheDocument();
   });
 });

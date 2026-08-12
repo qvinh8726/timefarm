@@ -3,7 +3,7 @@ const test = require("node:test");
 const {
   SupabaseClientKeyError,
   assertPublicSupabaseClientKey,
-} = require("../scripts/supabase-client-key.cjs");
+} = require("./supabase-client-key.cjs");
 
 function legacyJwt(role, overrides = {}) {
   const encode = (value) =>

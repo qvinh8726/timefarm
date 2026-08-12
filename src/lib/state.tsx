@@ -1140,7 +1140,9 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
             : response;
         const saved = parsePersistedState(rawState);
         setState(saved);
-        return { ok: true };
+        return isRecord(response) && typeof response.cleanupWarning === "string"
+          ? { ok: false, message: response.cleanupWarning }
+          : { ok: true };
       } catch (error) {
         return failure(error);
       }

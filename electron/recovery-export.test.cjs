@@ -1,12 +1,17 @@
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { DatabaseSync } = require("node:sqlite");
 const test = require("node:test");
+const { createLocalMutationExecutor } = require("./command-service.cjs");
 const {
   exportRecoveryCopy,
+  exportRepositoryRecoveryCopy,
   recoverySourceFiles,
 } = require("./recovery-export.cjs");
+const { emptyState, LocalStateRepository } = require("./state-repository.cjs");
 
 function withTemporaryDirectories(run) {
   const root = fs.mkdtempSync(
@@ -85,3 +90,142 @@ test("fails closed when there is no recoverable database", () =>
     );
     assert.deepEqual(fs.readdirSync(parentDirectory), []);
   }));
+
+test("manifest hashes the exported bytes when a source changes after copying", () =>
+  withTemporaryDirectories(({ userDataPath, parentDirectory }) => {
+    const source = path.join(userDataPath, "workly.db");
+    const copiedBytes = "snapshot-before-mutation";
+    fs.writeFileSync(source, copiedBytes);
+
+    const copyFileSync = fs.copyFileSync;
+    fs.copyFileSync = (...args) => {
+      copyFileSync(...args);
+      if (args[0] === source) fs.writeFileSync(source, "mutated-source");
+    };
+    let result;
+    try {
+      result = exportRecoveryCopy({
+        userDataPath,
+        parentDirectory,
+        now: new Date("2026-08-12T01:02:03.000Z"),
+        uniqueSuffix: "manifest-race",
+      });
+    } finally {
+      fs.copyFileSync = copyFileSync;
+    }
+
+    const exportedDatabase = path.join(result.destination, "workly.db");
+    const manifest = JSON.parse(
+      fs.readFileSync(
+        path.join(result.destination, "RECOVERY-MANIFEST.json"),
+        "utf8",
+      ),
+    );
+    assert.equal(fs.readFileSync(exportedDatabase, "utf8"), copiedBytes);
+    assert.deepEqual(manifest.files, [
+      {
+        file: "workly.db",
+        bytes: Buffer.byteLength(copiedBytes),
+        sha256: crypto.createHash("sha256").update(copiedBytes).digest("hex"),
+      },
+    ]);
+  }));
+
+test("uses a repository snapshot instead of copying live SQLite journals", () =>
+  withTemporaryDirectories(({ userDataPath, parentDirectory }) => {
+    fs.writeFileSync(path.join(userDataPath, "workly.db"), "live-db");
+    fs.writeFileSync(path.join(userDataPath, "workly.db-wal"), "live-wal");
+    fs.writeFileSync(path.join(userDataPath, "workly.db-shm"), "live-shm");
+    fs.writeFileSync(
+      path.join(userDataPath, "workly.db.pre-v2.backup"),
+      "migration-backup",
+    );
+
+    const result = exportRecoveryCopy({
+      userDataPath,
+      parentDirectory,
+      now: new Date("2026-08-12T01:02:03.000Z"),
+      uniqueSuffix: "repository-snapshot",
+      createDatabaseSnapshot(destinationPath) {
+        fs.writeFileSync(destinationPath, "consistent-database-snapshot", {
+          flag: "wx",
+        });
+      },
+    });
+
+    assert.deepEqual(result.files, ["workly.db", "workly.db.pre-v2.backup"]);
+    assert.equal(
+      fs.readFileSync(path.join(result.destination, "workly.db"), "utf8"),
+      "consistent-database-snapshot",
+    );
+    assert.equal(
+      fs.existsSync(path.join(result.destination, "workly.db-wal")),
+      false,
+    );
+    assert.equal(
+      fs.existsSync(path.join(result.destination, "workly.db-shm")),
+      false,
+    );
+  }));
+
+test("repository export waits for queued mutations before creating the SQLite snapshot", async () => {
+  const root = fs.mkdtempSync(
+    path.join(os.tmpdir(), "timefarm-repository-export-test-"),
+  );
+  const userDataPath = path.join(root, "user-data");
+  const parentDirectory = path.join(root, "exports");
+  fs.mkdirSync(parentDirectory);
+  const repository = new LocalStateRepository(
+    path.join(userDataPath, "workly.db"),
+  );
+  const runSerializedMutation = createLocalMutationExecutor();
+  const state = emptyState();
+  state.account = {
+    id: "account-after-queued-mutation",
+    displayName: "Recovery Owner",
+    country: "VN",
+    language: "vi",
+    currency: "VND",
+    timezone: "Asia/Saigon",
+    createdAt: "2026-08-12T01:02:03.000Z",
+  };
+  try {
+    const mutation = runSerializedMutation(() =>
+      repository.replaceState(state),
+    );
+    const result = await exportRepositoryRecoveryCopy({
+      repository,
+      runSerializedMutation,
+      userDataPath,
+      parentDirectory,
+      now: new Date("2026-08-12T01:02:03.000Z"),
+      uniqueSuffix: "queued",
+    });
+    await mutation;
+
+    assert.deepEqual(result.files, ["workly.db"]);
+    const snapshot = new DatabaseSync(
+      path.join(result.destination, "workly.db"),
+      { readOnly: true },
+    );
+    try {
+      assert.deepEqual(
+        snapshot
+          .prepare("SELECT id, display_name FROM accounts")
+          .all()
+          .map((row) => ({ ...row })),
+        [
+          {
+            id: "account-after-queued-mutation",
+            display_name: "Recovery Owner",
+          },
+        ],
+      );
+    } finally {
+      snapshot.close();
+    }
+  } finally {
+    repository.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

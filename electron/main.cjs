@@ -28,7 +28,10 @@ const {
   resolveLocalAccountPrincipal,
 } = require("./local-account-policy.cjs");
 const { LocalStateRepository } = require("./state-repository.cjs");
-const { exportRecoveryCopy } = require("./recovery-export.cjs");
+const {
+  exportRecoveryCopy,
+  exportRepositoryRecoveryCopy,
+} = require("./recovery-export.cjs");
 const {
   createCoalescedSyncExecutor,
   SyncService,
@@ -41,6 +44,17 @@ const {
   normaliseOAuthCallbackUrl,
 } = require("./navigation-security.cjs");
 const { installElectronSecurityHandlers } = require("./electron-security.cjs");
+const { performMainSignOut } = require("./main-auth-lifecycle.cjs");
+const {
+  applyCloudBootstrapIfCurrent,
+  applyCloudCacheRebuildIfCurrent,
+  createCloudActivityGate,
+} = require("./cloud-bootstrap-lifecycle.cjs");
+const { wipeDeviceState } = require("./device-wipe-lifecycle.cjs");
+const {
+  createPackagedRendererSmokeScript,
+  packagedSmokeExpectation,
+} = require("./packaged-smoke-policy.cjs");
 
 const isDev = !app.isPackaged;
 const isPackagedSmokeTest =
@@ -58,10 +72,11 @@ let overlayManager;
 let pendingOAuthCallback;
 let packagedSmokeTimeout;
 let legacyImportResult = { status: "not_found" };
-let cloudActivitySuppressed = false;
+let cloudLifecycleGeneration = 0;
 
 const runSerializedMutation = createLocalMutationExecutor();
 const runCoalescedSync = createCoalescedSyncExecutor();
+const cloudActivityGate = createCloudActivityGate();
 
 const protocol = "timefarm";
 const devServerUrl = "http://127.0.0.1:5173";
@@ -83,48 +98,7 @@ function openAllowedExternalUrl(url) {
   return shell.openExternal(externalUrl);
 }
 
-function packagedRendererSmokeScript() {
-  return `(() => {
-    const waitFor = async (predicate, label) => {
-      const deadline = Date.now() + 8000;
-      while (Date.now() < deadline) {
-        const value = predicate();
-        if (value) return value;
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      throw new Error('Timed out waiting for ' + label);
-    };
-    const click = async (selector, label) => {
-      const element = await waitFor(() => document.querySelector(selector), label);
-      element.click();
-    };
-    return (async () => {
-      await waitFor(
-        () => document.querySelector('#root')?.children.length && !document.querySelector('.fatal-error'),
-        'a healthy React root',
-      );
-      await click('button[title="Analytics"]', 'Analytics navigation');
-      await waitFor(
-        () => [...document.querySelectorAll('h1')].some((node) => node.textContent?.trim() === 'Analytics'),
-        'the lazy Analytics page',
-      );
-      await click('button[title="Settings"]', 'Settings navigation');
-      await waitFor(
-        () => [...document.querySelectorAll('h1')].some((node) => node.textContent?.trim() === 'Settings'),
-        'the lazy Settings page',
-      );
-      await click('.sidebar-start', 'start-session action');
-      await waitFor(
-        () => document.querySelector('.modal[role="dialog"]'),
-        'the lazy workspace dialog',
-      );
-      if (document.querySelector('.fatal-error')) throw new Error('Fatal renderer boundary appeared.');
-      return true;
-    })();
-  })()`;
-}
-
-function createWindow() {
+function createWindow(packagedSmokeEntry) {
   mainWindow = new BrowserWindow({
     show: !isPackagedSmokeTest,
     width: 1440,
@@ -173,14 +147,17 @@ function createWindow() {
     mainWindow.webContents.once("did-finish-load", () => {
       setTimeout(() => {
         void mainWindow.webContents
-          .executeJavaScript(packagedRendererSmokeScript(), true)
+          .executeJavaScript(
+            createPackagedRendererSmokeScript(packagedSmokeEntry),
+            true,
+          )
           .then((rendered) => {
             if (!rendered)
               throw new Error(
                 "The renderer finished loading without a healthy React root.",
               );
             console.log(
-              "Packaged smoke test loaded the React renderer and lazy workspace chunks.",
+              `Packaged smoke test loaded the expected ${packagedSmokeEntry} entry flow.`,
             );
             process.exitCode = 0;
             app.quit();
@@ -248,6 +225,17 @@ function notifyTimerLeaseChanged(payload) {
     mainWindow.webContents.send("workly:timer-lease-changed", payload);
 }
 
+function cancelSyncContinuation() {
+  if (!syncContinuationTimer) return;
+  clearTimeout(syncContinuationTimer);
+  syncContinuationTimer = undefined;
+}
+
+function invalidateCloudLifecycle() {
+  cloudLifecycleGeneration += 1;
+  return cloudLifecycleGeneration;
+}
+
 function publishSavedState(saved, { sync = false } = {}) {
   if (overlayManager) overlayManager.updateFromState(saved);
   notifyStateChanged(saved);
@@ -306,7 +294,7 @@ function intentAwareCommandFacade(service) {
 async function syncAndPublishNow() {
   if (!syncService || !repository)
     return { state: "not_ready", processed: 0, failed: 0 };
-  if (cloudActivitySuppressed)
+  if (cloudActivityGate.isSuppressed())
     return { state: "suppressed", processed: 0, failed: 0 };
   const account = repository.getAccount();
   if (!cloudSyncEligibility(account).eligible)
@@ -627,7 +615,9 @@ app
             properties: ["openDirectory", "createDirectory"],
           });
           if (!destination.canceled && destination.filePaths[0])
-            exportRecoveryCopy({
+            await exportRepositoryRecoveryCopy({
+              repository,
+              runSerializedMutation,
               userDataPath,
               parentDirectory: destination.filePaths[0],
             });
@@ -757,19 +747,25 @@ app
         // exists. That could let a new device create an outbox which overwrites
         // the existing account after reconnect.
         if (auth.offline) return { state: "offline" };
+        const bootstrapGeneration = cloudLifecycleGeneration;
         try {
           const remote = await syncService.getCloudBootstrapSnapshot(
             auth.user.id,
           );
           if (remote.state !== "ready") return { state: remote.state };
           if (remote.data.found !== true) return { state: "not_found" };
-          const result = await runSerializedMutation(() => {
-            if (repository.hasAccount())
-              return { state: "already_initialized" };
-            return syncService.applyCloudBootstrapSnapshot(
-              auth.user.id,
-              remote.data,
-            );
+          const result = await applyCloudBootstrapIfCurrent({
+            authUserId: auth.user.id,
+            expectedGeneration: bootstrapGeneration,
+            currentGeneration: () => cloudLifecycleGeneration,
+            getAuthStatus: () => authService.getStatus(),
+            repository,
+            runSerializedMutation,
+            applySnapshot: () =>
+              syncService.applyCloudBootstrapSnapshot(
+                auth.user.id,
+                remote.data,
+              ),
           });
           if (result.state === "restored") {
             publishSavedState(result.saved);
@@ -803,7 +799,8 @@ app
         });
         if (confirmation.response !== 1)
           return { cancelled: true, state: repository.loadState() };
-        cloudActivitySuppressed = true;
+        const releaseCloudActivity = cloudActivityGate.suppress();
+        invalidateCloudLifecycle();
         syncService.cancelPendingSync?.();
         timerLeaseService.stopRenewal();
         if (syncContinuationTimer) {
@@ -815,13 +812,17 @@ app
           const authStatus = await authService.signOut();
           notifyAuthChanged(authStatus);
           await mainWindow?.webContents?.session?.clearStorageData?.();
-          const wiped = await runSerializedMutation(() => {
-            const result = repository.wipeDeviceData(
-              path.join(userDataPath, "workly-state.json"),
-            );
-            removeDeviceAuxiliaryFiles(userDataPath);
-            return result;
-          });
+          const wiped = await runSerializedMutation(() =>
+            wipeDeviceState({
+              wipeWorkspace: () =>
+                repository.wipeDeviceData(
+                  path.join(userDataPath, "workly-state.json"),
+                ),
+              cleanupAuxiliaryFiles: () =>
+                removeDeviceAuxiliaryFiles(userDataPath),
+              publishState: (state) => publishSavedState(state),
+            }),
+          );
           legacyImportResult = { status: "not_found" };
           timerLeaseService = new TimerLeaseService({
             authService,
@@ -830,14 +831,16 @@ app
           fxService = new FxService({
             cacheFilePath: path.join(userDataPath, "fx-rates.json"),
           });
-          publishSavedState(wiped.state);
           return {
             cancelled: false,
             state: wiped.state,
             verification: wiped.verification,
+            ...(wiped.cleanupWarning
+              ? { cleanupWarning: wiped.cleanupWarning }
+              : {}),
           };
         } finally {
-          cloudActivitySuppressed = false;
+          releaseCloudActivity();
         }
       })();
     });
@@ -873,7 +876,8 @@ app
         if (confirmation.response !== 1)
           return { cancelled: true, state: repository.loadState() };
 
-        cloudActivitySuppressed = true;
+        const rebuildGeneration = cloudLifecycleGeneration;
+        const releaseCloudActivity = cloudActivityGate.suppress();
         syncService.cancelPendingSync?.();
         try {
           const remote = await syncService.getCloudBootstrapSnapshot(
@@ -883,17 +887,28 @@ app
             throw new Error(
               "A complete cloud workspace snapshot is unavailable; local cache was not changed.",
             );
-          const result = await runSerializedMutation(() =>
-            syncService.applyCloudBootstrapSnapshot(
-              principal.auth.user.id,
-              remote.data,
-              { replaceExisting: true },
-            ),
-          );
+          const result = await applyCloudCacheRebuildIfCurrent({
+            authUserId: principal.auth.user.id,
+            expectedGeneration: rebuildGeneration,
+            currentGeneration: () => cloudLifecycleGeneration,
+            getAuthStatus: () => authService.getStatus(),
+            repository,
+            runSerializedMutation,
+            applySnapshot: () =>
+              syncService.applyCloudBootstrapSnapshot(
+                principal.auth.user.id,
+                remote.data,
+                { replaceExisting: true },
+              ),
+          });
+          if (result.state === "cancelled")
+            throw new Error(
+              "The signed-in account or local cache changed while the cloud snapshot was downloading; local data was not replaced.",
+            );
           publishSavedState(result.saved);
           return { cancelled: false, state: result.saved };
         } finally {
-          cloudActivitySuppressed = false;
+          releaseCloudActivity();
         }
       })();
     });
@@ -1058,12 +1073,24 @@ app
       assertTrustedSender(event);
       return (async () => {
         timerLeaseService.stopRenewal();
-        const status = await authService.signOut();
-        notifyAuthChanged(status);
-        return status;
+        return performMainSignOut({
+          authService,
+          syncService,
+          cancelSyncContinuation,
+          invalidateCloudLifecycle,
+          notifyAuthChanged,
+        });
       })();
     });
-    if (isPackagedSmokeTest && !repository.hasAccount()) {
+    const packagedSmoke = isPackagedSmokeTest
+      ? packagedSmokeExpectation({ configured: authService.isConfigured() })
+      : undefined;
+    if (isPackagedSmokeTest && legacyImportNeedsRecovery()) {
+      throw new Error(
+        "Packaged smoke profile unexpectedly contains unresolved legacy recovery data.",
+      );
+    }
+    if (packagedSmoke?.seedLocalAccount && !repository.hasAccount()) {
       commandService.execute({
         type: "account.initialize",
         payload: {
@@ -1074,7 +1101,7 @@ app
         },
       });
     }
-    createWindow();
+    createWindow(packagedSmoke?.entry);
     if (isPackagedSmokeTest) return;
     void syncAndPublish();
     const account = repository.getAccount();
@@ -1115,10 +1142,17 @@ app
         });
         if (!destination.canceled && destination.filePaths[0]) {
           try {
-            const exported = exportRecoveryCopy({
+            const options = {
               userDataPath,
               parentDirectory: destination.filePaths[0],
-            });
+            };
+            const exported = repository
+              ? await exportRepositoryRecoveryCopy({
+                  ...options,
+                  repository,
+                  runSerializedMutation,
+                })
+              : exportRecoveryCopy(options);
             await dialog.showMessageBox({
               type: "info",
               buttons: ["OK"],

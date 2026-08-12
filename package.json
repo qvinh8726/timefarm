@@ -1,6 +1,6 @@
 {
   "name": "timefarm-desktop",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "license": "UNLICENSED",
   "packageManager": "pnpm@11.16.0",
@@ -34,8 +34,9 @@
     "check:cloud": "node scripts/check-cloud-contract.cjs",
     "smoke:win:packaged": "node scripts/smoke-packaged-app.cjs",
     "smoke:win:installer": "node scripts/smoke-windows-installer.cjs",
-    "pack:win": "node scripts/prepare-runtime-config.cjs && node scripts/check-bundled-runtime-config.cjs && pnpm build && electron-builder --win nsis --x64 --publish never && pnpm check:win:fuses",
-    "pack:win:dir": "node scripts/check-bundled-runtime-config.cjs && pnpm build && electron-builder --win dir --x64 --publish never && pnpm check:win:fuses"
+    "pack:win": "node scripts/prepare-runtime-config.cjs && node scripts/check-bundled-runtime-config.cjs cloud && pnpm build && electron-builder --win nsis --x64 --publish never && pnpm check:win:fuses && node scripts/check-packaged-runtime-config.cjs cloud",
+    "pack:win:offline": "node scripts/prepare-offline-runtime-config.cjs && node scripts/check-bundled-runtime-config.cjs offline && pnpm build && electron-builder --win nsis --x64 --publish never && pnpm check:win:fuses && node scripts/check-packaged-runtime-config.cjs offline",
+    "pack:win:dir": "node scripts/prepare-offline-runtime-config.cjs && node scripts/check-bundled-runtime-config.cjs offline && pnpm build && electron-builder --win dir --x64 --publish never && pnpm check:win:fuses && node scripts/check-packaged-runtime-config.cjs offline"
   },
   "dependencies": {
     "@js-temporal/polyfill": "^0.5.1",
@@ -46,6 +47,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@electron/asar": "3.4.1",
     "@electron/fuses": "2.1.3",
     "@eslint/js": "^10.0.1",
     "@testing-library/jest-dom": "^7.0.1",

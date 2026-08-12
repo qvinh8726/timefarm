@@ -20,6 +20,7 @@ export interface AuthStatus {
   user: SafeAuthUser | null;
   offline?: boolean;
   error?: string;
+  statusUnavailable?: boolean;
 }
 
 interface AuthStore {
@@ -52,9 +53,22 @@ export function AuthProvider({ children }: PropsWithChildren) {
       setStatus(offlineStatus);
       return offlineStatus;
     }
-    const next = (await window.worklyDesktop.getAuthStatus()) as AuthStatus;
-    setStatus(next);
-    return next;
+    try {
+      const next = (await window.worklyDesktop.getAuthStatus()) as AuthStatus;
+      setStatus(next);
+      return next;
+    } catch (error) {
+      const unavailable = {
+        ...offlineStatus,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to read authentication status.",
+        statusUnavailable: true,
+      } satisfies AuthStatus;
+      setStatus(unavailable);
+      throw error;
+    }
   }, []);
 
   useEffect(() => {
@@ -66,6 +80,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
             setStatus({
               ...offlineStatus,
               error: "Unable to read authentication status.",
+              statusUnavailable: true,
             });
         })
         .finally(() => {

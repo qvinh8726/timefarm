@@ -2,7 +2,7 @@
 
 Date: 2026-08-12
 Base revision reviewed: `4fc7381fe2ad6a4d0f3197bc66a52a88099db2b8`
-Working tree: intentionally uncommitted
+Release candidate: `0.2.3`
 
 ## 1. P0 fixed
 
@@ -82,7 +82,8 @@ results so late responses cannot repopulate cleared state.
 - Encrypted local auth, bounded PKCE continuation, strict token non-exposure,
   fail-closed public-key packaging, and 9/9 Electron fuse policy checks.
 - Added CODEOWNERS, pinned Actions verification, Dependabot, CodeQL/dependency
-  review, signed-release gates, SBOM generation, and SBOM attestation workflow.
+  review, explicit unsigned-v0.x release gates, SBOM generation, and exact-artifact
+  SBOM/build-provenance attestations.
 
 ## 7. UI/UX redesign
 
@@ -100,10 +101,10 @@ results so late responses cannot repopulate cleared state.
 
 ## 8. Added or changed tests
 
-- Renderer: 10 files / 67 tests after redesign, including money invariants,
+- Renderer: 11 files / 75 tests after redesign, including money invariants,
   live overlap, validation, state serialization, accessibility, Analytics, and
   inline wipe confirmation.
-- Electron: 151 tests covering timer timestamps, slow-sync isolation, sync
+- Electron: 202 tests covering timer timestamps, slow-sync isolation, sync
   coalescing, leases, repository invariants, conflicts, wipe/recovery, auth
   timeouts, client-key validation, navigation/security, preload bridges, and the
   Quiet Instrument overlay.
@@ -120,12 +121,12 @@ Passed locally:
 - `pnpm lint:css`
 - `pnpm check:electron`
 - `pnpm check:workflows`
-- `pnpm test` — Renderer 67/67; Electron 151/151
-- `pnpm test:coverage` — Renderer 61.88% lines; domain 94.73% lines;
-  Electron 88.37% lines / 72.17% branches / 93.12% functions
+- `pnpm test` — Renderer 75/75; Electron 202/202
+- `pnpm test:coverage` — Renderer 62.56% lines; domain 94.73% lines;
+  Electron 89.09% lines / 73.95% branches / 93.56% functions
 - `pnpm build`
-- `pnpm check:bundle` — 8 chunks, largest 190,489 B, total 607,047 B
-- `pnpm audit --prod` — no known vulnerabilities
+- `pnpm check:bundle` — 8 chunks, largest 194,101 B, total 610,452 B
+- `pnpm audit --audit-level high` — no known vulnerabilities
 
 Not locally executable:
 
@@ -144,20 +145,22 @@ Passed in GitHub CI on the pushed release source:
 
 ## 10. Packaging results
 
-- Offline `pnpm pack:win:dir`: pass, including 9/9 fuse checks.
-- `pnpm smoke:win:packaged`: pass; renderer, lazy pages, and dialog loaded and
-  exited cleanly.
-- NSIS QA build with the repository's public CI placeholder configuration:
-  pass. This is not a production credential or hosted-cloud verification.
-- `pnpm smoke:win:installer`: pass; installed, rendered, uninstalled, and cleaned
-  up.
-- Offline v0.2.2 public prerelease build: pass in the isolated
-  `release-public/` output, with no bundled runtime config or CI placeholder;
-  9/9 fuse checks, packaged smoke, and installer install/render/uninstall/cleanup
-  all passed. Authenticode reports `NotSigned`, matching the release disclosure.
-- Real release `pnpm pack:win` without credentials correctly hard-failed. A
-  signed production installer still requires the public hosted configuration
-  plus Windows signing secrets in the release environment.
+- Cloud-mode QA build with a public non-production placeholder: pass; packaged
+  smoke verified the signed-out authentication form and Google/email entry
+  points. This is not a production credential or hosted-cloud verification.
+- Offline `pnpm pack:win:offline`: pass with an explicit offline marker inside
+  the final ASAR and 9/9 fuse checks.
+- `pnpm smoke:win:packaged` and `pnpm smoke:win:installer`: pass for both modes;
+  each packaged app rendered its expected entry flow, and each installer
+  installed, rendered, uninstalled, and cleaned up.
+- Final offline installer candidate: `release/TimeFarm-0.2.3-Setup.exe`,
+  112,954,349 bytes, SHA-256
+  `6c4cb7cd9251dcdd606cf779268bfb2918a5b23c14628a80ee26fbf06b17d335`.
+  Authenticode reports `NotSigned`, matching the release disclosure.
+- Real release `pnpm pack:win` without public cloud configuration correctly
+  hard-failed. The v0.x production-environment workflow requires that public
+  configuration, disables certificate discovery, and rejects the installer
+  unless Authenticode reports `NotSigned`.
 
 ## 11. External actions still required
 
@@ -166,12 +169,14 @@ Repository owner/admin must:
 1. Run `pnpm check:cloud` against the real hosted project; fresh migration
    replay, lint, and pgTAP (58 + 44 assertions) already pass in GitHub CI.
 2. Configure the GitHub `production` environment secrets and required reviewer;
-   enable branch/ruleset protection requiring CI, database, security, and signed
-   release checks.
+   enable branch/ruleset protection requiring CI, database, security, and
+   unsigned prerelease checks.
 3. Enable GitHub private vulnerability reporting, code scanning, dependency
    graph/alerts, and secret scanning/push protection in repository settings.
-4. Add the Windows code-signing certificate secrets, publish signed artifacts,
-   verify SHA-256/SBOM attestations, and establish SmartScreen reputation.
+4. Publish only an unsigned `v0.*` prerelease, retain the visible Unknown
+   Publisher/SmartScreen disclosure, and verify its SHA-256 plus SBOM and
+   build-provenance attestations.
+   Code signing and reputation building are deferred to a future stable line.
 5. Validate Email Auth/Google OAuth redirects, multi-device conflict/lease
    behavior, and long offline-window retention on physical devices.
 
@@ -181,8 +186,8 @@ Repository owner/admin must:
   tests in this environment; real credentials were intentionally unavailable.
 - SQLite/database concurrency tests cover repository and SQL contracts, but a
   true two-connection hosted/Postgres race run still depends on Docker/CI.
-- Clean-machine signed upgrade/rollback, physical screen readers, multi-monitor,
+- Clean-machine unsigned upgrade/rollback, physical screen readers, multi-monitor,
   high-DPI Windows scaling, crash/power-loss, and extended provider/network
   outage testing remain external release validation.
-- The project remains a beta until those hosted, signing, and physical-device
-  checks are completed.
+- The project remains a beta until those hosted and physical-device checks are
+  completed; code signing is not a gate for the explicitly unsigned v0.x line.

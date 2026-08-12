@@ -7,12 +7,14 @@ export function Modal({
   children,
   onClose,
   locked,
+  closeLabel = "Close",
 }: {
   title: string;
   subtitle?: string;
   children: ReactNode;
   onClose: () => void;
   locked?: boolean;
+  closeLabel?: string;
 }) {
   const dialogRef = useRef<HTMLElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -104,7 +106,7 @@ export function Modal({
               className="icon-button"
               type="button"
               onClick={onClose}
-              aria-label="Close"
+              aria-label={closeLabel}
             >
               <X size={20} />
             </button>

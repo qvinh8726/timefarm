@@ -1,6 +1,4 @@
-const fs = require("node:fs");
-const path = require("node:path");
-const { assertPublicSupabaseClientKey } = require("./supabase-client-key.cjs");
+const { prepareCloudRuntimeConfig } = require("./runtime-config-contract.cjs");
 
 const url =
   process.env.TIMEFARM_SUPABASE_URL || process.env.WORKLY_SUPABASE_URL || "";
@@ -20,23 +18,13 @@ if (!url || !anonKey) {
   process.exit(1);
 }
 
-let publicClientKey;
 try {
-  publicClientKey = assertPublicSupabaseClientKey(anonKey).key;
+  prepareCloudRuntimeConfig(undefined, { url, anonKey, redirectUrl });
 } catch (error) {
-  console.error(error instanceof Error ? error.message : "Invalid client key.");
+  console.error(
+    error instanceof Error ? error.message : "Invalid cloud configuration.",
+  );
   process.exit(1);
 }
 
-const outputPath = path.join(
-  __dirname,
-  "..",
-  "electron",
-  "timefarm.config.json",
-);
-fs.writeFileSync(
-  outputPath,
-  `${JSON.stringify({ supabaseUrl: url.trim(), supabaseAnonKey: publicClientKey, oauthRedirectUrl: redirectUrl.trim() }, null, 2)}\n`,
-  { encoding: "utf8", mode: 0o600 },
-);
 console.log("Prepared bundled TimeFarm cloud configuration.");

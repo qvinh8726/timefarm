@@ -32,13 +32,36 @@ function secureStorage() {
   };
 }
 
+function fileSystemWithBlockedRemoval(
+  blockedFileName,
+  { throwError = true } = {},
+) {
+  return {
+    existsSync: fs.existsSync,
+    lstatSync: fs.lstatSync,
+    readFileSync: fs.readFileSync,
+    writeFileSync: fs.writeFileSync,
+    rmSync: (target, options) => {
+      if (path.basename(target) === blockedFileName) {
+        if (throwError) {
+          const error = new Error("Removal blocked for test.");
+          error.code = "EPERM";
+          throw error;
+        }
+        return;
+      }
+      return fs.rmSync(target, options);
+    },
+  };
+}
+
 function configuredService(directory, options = {}) {
   return new SupabaseAuthService({
     userDataPath: directory,
     safeStorage: secureStorage(),
     environment: {
       WORKLY_SUPABASE_URL: "https://project.supabase.co",
-      WORKLY_SUPABASE_ANON_KEY: "anon",
+      WORKLY_SUPABASE_ANON_KEY: "sb_publishable_test-client-key",
     },
     ...options,
   });
@@ -165,10 +188,58 @@ test("auth configuration only accepts explicit usable URL and anon key", () => {
   );
   const configuration = readConfiguration({
     WORKLY_SUPABASE_URL: "https://project.supabase.co",
-    WORKLY_SUPABASE_ANON_KEY: "anon",
+    WORKLY_SUPABASE_ANON_KEY: "sb_publishable_test-client-key",
   });
   assert.equal(configuration.configured, true);
   assert.equal(configuration.redirectUrl, "timefarm://auth/callback");
+});
+
+test("auth runtime rejects privileged keys and unsafe endpoint configuration", () => {
+  const valid = {
+    TIMEFARM_SUPABASE_URL: "https://project.supabase.co",
+    TIMEFARM_SUPABASE_ANON_KEY: "sb_publishable_public-client-key_123",
+  };
+
+  assert.equal(readConfiguration(valid).configured, true);
+  for (const environment of [
+    { ...valid, TIMEFARM_SUPABASE_ANON_KEY: "sb_secret_server-only-key" },
+    {
+      ...valid,
+      TIMEFARM_SUPABASE_URL:
+        "https://username:password@project.supabase.co/private",
+    },
+    {
+      ...valid,
+      TIMEFARM_OAUTH_REDIRECT_URL: "https://attacker.example/callback",
+    },
+  ]) {
+    assert.deepEqual(readConfiguration(environment), { configured: false });
+  }
+});
+
+test("auth runtime keeps environment and bundled cloud credentials atomic", () => {
+  const bundled = {
+    mode: "cloud",
+    supabaseUrl: "https://bundled-project.supabase.co",
+    supabaseAnonKey: "sb_publishable_bundled-client-key",
+    oauthRedirectUrl: "timefarm://auth/callback",
+  };
+
+  assert.equal(readConfiguration({}, bundled).configured, true);
+  assert.deepEqual(
+    readConfiguration(
+      { TIMEFARM_SUPABASE_URL: "https://override-project.supabase.co" },
+      bundled,
+    ),
+    { configured: false },
+  );
+  assert.deepEqual(
+    readConfiguration(
+      { TIMEFARM_SUPABASE_ANON_KEY: "sb_publishable_override-client-key" },
+      bundled,
+    ),
+    { configured: false },
+  );
 });
 
 test("auth status never exposes token material to the renderer", () => {
@@ -619,4 +690,102 @@ test("ignores a late hydration result after sign out and does not resurrect the 
     resolveHydration({ data: { session: storedSession }, error: null });
     assert.equal(await hydration, null);
     assert.equal(fs.existsSync(service.sessionPath), false);
+  }));
+
+test("fails sign out before any remote call when encrypted local credentials remain", async () =>
+  withTemporaryDirectory(async (directory) => {
+    for (const blockedFileName of [
+      "auth-session.bin",
+      "auth-oauth-pending.bin",
+    ]) {
+      const caseDirectory = path.join(directory, blockedFileName);
+      fs.mkdirSync(caseDirectory);
+      const service = configuredService(caseDirectory, {
+        fileSystem: fileSystemWithBlockedRemoval(blockedFileName),
+      });
+      service.persistSession(storedSession, {
+        id: "user-1",
+        email: "minh@example.com",
+      });
+      fs.writeFileSync(service.pendingOAuthPath, "encrypted-pkce", "utf8");
+      let remoteSignOutCalls = 0;
+      service.client = {
+        auth: {
+          signOut: async () => {
+            remoteSignOutCalls += 1;
+            return { error: null };
+          },
+        },
+      };
+
+      await assert.rejects(
+        () => service.signOut(),
+        /could not remove the encrypted local sign-in credentials/i,
+      );
+      assert.equal(remoteSignOutCalls, 0);
+      assert.equal(
+        fs.existsSync(path.join(caseDirectory, blockedFileName)),
+        true,
+      );
+    }
+  }));
+
+test("verifies encrypted local credentials are absent after removal reports success", async () =>
+  withTemporaryDirectory(async (directory) => {
+    const service = configuredService(directory, {
+      fileSystem: fileSystemWithBlockedRemoval("auth-session.bin", {
+        throwError: false,
+      }),
+    });
+    service.persistSession(storedSession);
+    let remoteSignOutCalls = 0;
+    service.client = {
+      auth: {
+        signOut: async () => {
+          remoteSignOutCalls += 1;
+          return { error: null };
+        },
+      },
+    };
+
+    await assert.rejects(
+      () => service.signOut(),
+      /could not remove the encrypted local sign-in credentials/i,
+    );
+    assert.equal(remoteSignOutCalls, 0);
+    assert.equal(fs.existsSync(service.sessionPath), true);
+  }));
+
+test("does not mistake an inaccessible credential path for successful removal", async () =>
+  withTemporaryDirectory(async (directory) => {
+    const fileSystem = fileSystemWithBlockedRemoval("auth-session.bin", {
+      throwError: false,
+    });
+    fileSystem.existsSync = () => false;
+    fileSystem.lstatSync = (target) => {
+      if (path.basename(target) === "auth-session.bin") {
+        const error = new Error("Credential path is inaccessible.");
+        error.code = "EACCES";
+        throw error;
+      }
+      return fs.lstatSync(target);
+    };
+    const service = configuredService(directory, { fileSystem });
+    service.persistSession(storedSession);
+    let remoteSignOutCalls = 0;
+    service.client = {
+      auth: {
+        signOut: async () => {
+          remoteSignOutCalls += 1;
+          return { error: null };
+        },
+      },
+    };
+
+    await assert.rejects(
+      () => service.signOut(),
+      /could not remove the encrypted local sign-in credentials/i,
+    );
+    assert.equal(remoteSignOutCalls, 0);
+    assert.equal(fs.existsSync(service.sessionPath), true);
   }));

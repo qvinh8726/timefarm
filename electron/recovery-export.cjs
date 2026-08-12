@@ -25,6 +25,7 @@ function exportRecoveryCopy({
   parentDirectory,
   now = new Date(),
   uniqueSuffix = process.pid,
+  createDatabaseSnapshot = undefined,
 }) {
   if (!path.isAbsolute(parentDirectory))
     throw new Error("The recovery destination must be an absolute path.");
@@ -37,17 +38,31 @@ function exportRecoveryCopy({
     `TimeFarm-recovery-${safeTimestamp(now)}-${uniqueSuffix}`,
   );
   fs.mkdirSync(destination, { recursive: false });
-  for (const source of sources) {
+  const useConsistentDatabaseSnapshot =
+    typeof createDatabaseSnapshot === "function";
+  const sourcesToCopy = useConsistentDatabaseSnapshot
+    ? sources.filter(
+        (source) => !/^workly\.db(?:-wal|-shm)?$/.test(path.basename(source)),
+      )
+    : sources;
+  if (useConsistentDatabaseSnapshot)
+    createDatabaseSnapshot(path.join(destination, "workly.db"));
+  for (const source of sourcesToCopy) {
     fs.copyFileSync(
       source,
       path.join(destination, path.basename(source)),
       fs.constants.COPYFILE_EXCL,
     );
   }
-  const manifest = sources.map((source) => {
-    const bytes = fs.readFileSync(source);
+  const exportedFiles = [
+    ...(useConsistentDatabaseSnapshot ? ["workly.db"] : []),
+    ...sourcesToCopy.map((source) => path.basename(source)),
+  ].sort((left, right) => left.localeCompare(right));
+  const manifest = exportedFiles.map((file) => {
+    const exportedFile = path.join(destination, file);
+    const bytes = fs.readFileSync(exportedFile);
     return {
-      file: path.basename(source),
+      file,
       bytes: bytes.length,
       sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
     };
@@ -72,8 +87,34 @@ function exportRecoveryCopy({
   );
   return {
     destination,
-    files: sources.map((source) => path.basename(source)),
+    files: exportedFiles,
   };
 }
 
-module.exports = { exportRecoveryCopy, recoverySourceFiles };
+function exportRepositoryRecoveryCopy({
+  repository,
+  runSerializedMutation,
+  userDataPath,
+  parentDirectory,
+  now = new Date(),
+  uniqueSuffix = process.pid,
+}) {
+  // Keep the SQLite snapshot and adjacent legacy-file copies behind the same
+  // queue as local imports and commands, so the exported set has one boundary.
+  return runSerializedMutation(() =>
+    exportRecoveryCopy({
+      userDataPath,
+      parentDirectory,
+      now,
+      uniqueSuffix,
+      createDatabaseSnapshot: (destinationPath) =>
+        repository.createRecoverySnapshot(destinationPath),
+    }),
+  );
+}
+
+module.exports = {
+  exportRecoveryCopy,
+  exportRepositoryRecoveryCopy,
+  recoverySourceFiles,
+};

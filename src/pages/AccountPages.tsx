@@ -7,6 +7,7 @@ import type {
 } from "../domain/types";
 import { translate } from "../i18n";
 import { useAppStore, useAppStoreState } from "../lib/state";
+import { LocalDataResetConfirmation } from "../components/LocalDataResetConfirmation";
 import "./account-pages.css";
 
 function workspaceLabel(
@@ -14,10 +15,6 @@ function workspaceLabel(
   key: "profile" | "settings",
 ): string {
   return translate(language, "workspace", key);
-}
-
-function browserWipeConfirmation(language: AppLanguage): string {
-  return language === "vi" ? "XÓA" : "WIPE";
 }
 
 export function ProfilePage() {
@@ -130,7 +127,6 @@ export function SettingsPage() {
   >(null);
   const [settingError, setSettingError] = useState("");
   const [wipeConfirmationOpen, setWipeConfirmationOpen] = useState(false);
-  const [wipeConfirmation, setWipeConfirmation] = useState("");
   const mutationInFlightRef = useRef(false);
   const pendingMessage = settingAction
     ? language === "vi"
@@ -185,13 +181,7 @@ export function SettingsPage() {
     }
   };
   const reset = async () => {
-    if (
-      mutationInFlightRef.current ||
-      dataAction ||
-      (!window.worklyDesktop?.resetLocalData &&
-        wipeConfirmation !== browserWipeConfirmation(language))
-    )
-      return;
+    if (mutationInFlightRef.current || dataAction) return;
     mutationInFlightRef.current = true;
     setDataAction("wipe");
     setResetError("");
@@ -203,7 +193,6 @@ export function SettingsPage() {
       mutationInFlightRef.current = false;
       setDataAction(null);
       setWipeConfirmationOpen(false);
-      setWipeConfirmation("");
     }
   };
   const rebuild = async () => {
@@ -459,10 +448,7 @@ export function SettingsPage() {
                 disabled={Boolean(dataAction || settingAction)}
                 aria-describedby="wipe-device-description"
                 aria-busy={dataAction === "wipe"}
-                onClick={() => {
-                  if (window.worklyDesktop?.resetLocalData) void reset();
-                  else setWipeConfirmationOpen(true);
-                }}
+                onClick={() => setWipeConfirmationOpen(true)}
               >
                 {dataAction === "wipe" ? (
                   <LoaderCircle size={17} className="spin" aria-hidden="true" />
@@ -473,45 +459,14 @@ export function SettingsPage() {
               </button>
             </div>
             {wipeConfirmationOpen && (
-              <div className="account-wipe-confirmation" role="alert">
-                <label htmlFor="wipe-confirmation">
-                  {language === "vi"
-                    ? `Nhập ${browserWipeConfirmation(language)} để xác nhận.`
-                    : `Type ${browserWipeConfirmation(language)} to confirm.`}
-                </label>
-                <div>
-                  <input
-                    id="wipe-confirmation"
-                    autoFocus
-                    value={wipeConfirmation}
-                    onChange={(event) =>
-                      setWipeConfirmation(
-                        event.target.value.toLocaleUpperCase(),
-                      )
-                    }
-                  />
-                  <button
-                    type="button"
-                    className="button ghost"
-                    onClick={() => {
-                      setWipeConfirmationOpen(false);
-                      setWipeConfirmation("");
-                    }}
-                  >
-                    {language === "vi" ? "Hủy" : "Cancel"}
-                  </button>
-                  <button
-                    type="button"
-                    className="button danger"
-                    disabled={
-                      wipeConfirmation !== browserWipeConfirmation(language)
-                    }
-                    onClick={() => void reset()}
-                  >
-                    {language === "vi" ? "Xác nhận wipe" : "Confirm wipe"}
-                  </button>
-                </div>
-              </div>
+              <LocalDataResetConfirmation
+                language={language}
+                busy={dataAction === "wipe"}
+                onCancel={() => {
+                  setWipeConfirmationOpen(false);
+                }}
+                onConfirm={reset}
+              />
             )}
           </div>
 

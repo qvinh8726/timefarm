@@ -138,6 +138,7 @@ function StartSessionDialog({
       }
       onClose={onClose}
       locked={busy}
+      closeLabel={language === "vi" ? "Đóng" : "Close"}
     >
       <div className="project-picker">
         <button
@@ -324,6 +325,7 @@ function CompleteSessionDialog({
       }
       onClose={onClose}
       locked={busy}
+      closeLabel={language === "vi" ? "Đóng" : "Close"}
     >
       <form onSubmit={submit} aria-busy={busy}>
         <div className="completion-summary">
@@ -553,6 +555,7 @@ function ProjectDialog({
       }
       onClose={onClose}
       locked={busy}
+      closeLabel={language === "vi" ? "Đóng" : "Close"}
     >
       <form onSubmit={submit} aria-busy={busy}>
         <Field label={language === "vi" ? "Tên dự án" : "Project name"}>
@@ -807,6 +810,7 @@ function PaymentDialog({
           : `${project.name} · Project payments remain separate from per-session earnings.`
       }
       onClose={onClose}
+      closeLabel={language === "vi" ? "Đóng" : "Close"}
     >
       <form onSubmit={submit} aria-busy={busy}>
         <div className="form-grid money-grid">
@@ -1126,6 +1130,7 @@ function GoalDialog({ goal, onClose }: { goal?: Goal; onClose: () => void }) {
       }
       onClose={onClose}
       locked={busy}
+      closeLabel={language === "vi" ? "Đóng" : "Close"}
     >
       <form onSubmit={submit} aria-busy={busy}>
         <Field label={language === "vi" ? "Loại mục tiêu" : "Goal type"}>
@@ -1248,6 +1253,7 @@ function EditSessionDialog({
           : "Older sessions are locked to preserve historical integrity."
       }
       onClose={onClose}
+      closeLabel={language === "vi" ? "Đóng" : "Close"}
     >
       <form onSubmit={submit} aria-busy={busy}>
         <div className="form-grid money-grid">

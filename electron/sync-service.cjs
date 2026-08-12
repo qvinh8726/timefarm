@@ -21,6 +21,29 @@ class SyncRpcTimeoutError extends Error {
   }
 }
 
+class SyncRevisionConflictError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "SyncRevisionConflictError";
+    this.code = "REVISION_CONFLICT";
+  }
+}
+
+class SyncRpcResponseError extends Error {
+  constructor(error) {
+    super(error?.message || "Sync RPC failed.");
+    this.name = "SyncRpcResponseError";
+    this.code = typeof error?.code === "string" ? error.code : "";
+  }
+}
+
+function isDefinitiveWriteRejection(error) {
+  return (
+    error instanceof SyncRevisionConflictError ||
+    (error instanceof SyncRpcResponseError && Boolean(error.code))
+  );
+}
+
 function normaliseRpcTimeoutMs(value) {
   if (!Number.isInteger(value) || value < 1) {
     throw new TypeError(
@@ -365,6 +388,46 @@ class SyncService {
     if (!token) return { state: "not_authenticated", processed: 0, failed: 0 };
     let processed = 0;
     let failed = 0;
+    if (
+      typeof this.repository.getInFlightOperations === "function" &&
+      typeof this.repository.hasInFlightOperations === "function"
+    ) {
+      const uncertain = this.repository.getInFlightOperations(50);
+      for (const operation of uncertain) {
+        if (!this.isCurrentSync(generation)) return cancelled();
+        try {
+          const result = await this.applyOperation(operation, token);
+          if (!this.isCurrentSync(generation)) return cancelled();
+          this.repository.markOperationSynced(
+            operation.id,
+            result?.remoteRevision,
+          );
+          processed += 1;
+        } catch (error) {
+          if (!this.isCurrentSync(generation)) return cancelled();
+          const message =
+            error instanceof Error ? error.message : "Sync failed.";
+          this.repository.markOperationFailed(operation.id, message, {
+            uncertain: !isDefinitiveWriteRejection(error),
+          });
+          failed += 1;
+          this.logger.warn("TimeFarm uncertain sync operation retry failed", {
+            operationId: operation.id,
+            entityType: operation.entityType,
+          });
+          if (operation.entityType === "account") {
+            return { state: "partial", processed, failed };
+          }
+        }
+      }
+      if (this.repository.hasInFlightOperations()) {
+        return {
+          state: failed > 0 ? "partial" : "retry_pending",
+          processed,
+          failed,
+        };
+      }
+    }
     // Pull before writing. If another device changed an entity while this
     // device was offline, the repository records that conflict and omits
     // the pending local operation from this run instead of silently
@@ -416,6 +479,12 @@ class SyncService {
     }
     for (const operation of operations) {
       if (!this.isCurrentSync(generation)) return cancelled();
+      if (
+        typeof this.repository.claimOperation === "function" &&
+        !this.repository.claimOperation(operation.id)
+      ) {
+        continue;
+      }
       try {
         const result = await this.applyOperation(operation, token);
         if (!this.isCurrentSync(generation)) return cancelled();
@@ -427,7 +496,9 @@ class SyncService {
       } catch (error) {
         if (!this.isCurrentSync(generation)) return cancelled();
         const message = error instanceof Error ? error.message : "Sync failed.";
-        this.repository.markOperationFailed(operation.id, message);
+        this.repository.markOperationFailed(operation.id, message, {
+          uncertain: !isDefinitiveWriteRejection(error),
+        });
         failed += 1;
         this.logger.warn("TimeFarm sync operation failed", {
           operationId: operation.id,
@@ -499,7 +570,7 @@ class SyncService {
   async applyOperation(operation, accessToken) {
     const revisionAware = this.supportsRevisionCas();
     const params = {
-      p_operation_id: operation.id,
+      p_operation_id: operation.idempotencyKey ?? operation.id,
       p_entity_type: operation.entityType,
       p_entity_id: operation.entityId,
       p_operation: operation.operation,
@@ -512,7 +583,7 @@ class SyncService {
       params,
       accessToken,
     );
-    if (error) throw new Error(error.message);
+    if (error) throw new SyncRpcResponseError(error);
     if (!revisionAware) return data;
     if (!data || typeof data !== "object" || Array.isArray(data))
       throw new Error(
@@ -525,7 +596,7 @@ class SyncService {
       const current = Number.isSafeInteger(data.currentRevision)
         ? data.currentRevision
         : "unknown";
-      throw new Error(
+      throw new SyncRevisionConflictError(
         `Cloud revision conflict for ${operation.entityType}/${operation.entityId}: expected ${expected ?? "unknown"}, current ${current}. Pull the cloud version before retrying.`,
       );
     }

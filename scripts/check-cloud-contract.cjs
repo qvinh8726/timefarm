@@ -1,19 +1,24 @@
-const urlValue = process.env.TIMEFARM_SUPABASE_URL?.trim();
-const anonKey = process.env.TIMEFARM_SUPABASE_ANON_KEY?.trim();
+const {
+  assertCloudConfiguration,
+} = require("../electron/cloud-configuration.cjs");
 
-if (!urlValue || !anonKey) {
+const urlValue = process.env.TIMEFARM_SUPABASE_URL;
+const anonKeyValue = process.env.TIMEFARM_SUPABASE_ANON_KEY;
+
+if (!urlValue?.trim() || !anonKeyValue?.trim()) {
   console.error(
     "Cloud contract check requires TIMEFARM_SUPABASE_URL and TIMEFARM_SUPABASE_ANON_KEY.",
   );
   process.exit(1);
 }
 
-let baseUrl;
+let configuration;
 try {
-  const parsed = new URL(urlValue);
-  if (parsed.protocol !== "https:" || parsed.username || parsed.password)
-    throw new Error("Supabase URL must be a credential-free HTTPS origin.");
-  baseUrl = parsed.origin;
+  configuration = assertCloudConfiguration({
+    url: urlValue,
+    anonKey: anonKeyValue,
+    redirectUrl: "timefarm://auth/callback",
+  });
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);
   process.exit(1);
@@ -63,16 +68,18 @@ async function run() {
   ];
 
   for (const probe of probes) {
-    const response = await fetch(`${baseUrl}/rest/v1/rpc/${probe.name}`, {
-      method: "POST",
-      headers: {
-        apikey: anonKey,
-        authorization: `Bearer ${anonKey}`,
-        "content-type": "application/json",
+    const response = await fetch(
+      `${configuration.url}/rest/v1/rpc/${probe.name}`,
+      {
+        method: "POST",
+        headers: {
+          apikey: configuration.anonKey,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(probe.body),
+        signal: AbortSignal.timeout(15_000),
       },
-      body: JSON.stringify(probe.body),
-      signal: AbortSignal.timeout(15_000),
-    });
+    );
 
     const payload = await response.json().catch(() => ({}));
     const message = typeof payload.message === "string" ? payload.message : "";

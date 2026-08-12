@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import axe from "axe-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createEmptyState, type AppState } from "../domain/types";
@@ -82,6 +88,36 @@ afterEach(() => {
 });
 
 describe("AnalyticsPage ledger hierarchy", () => {
+  it("surfaces a rejected FX refresh without an unhandled promise", async () => {
+    const state = populatedState();
+    state.sessions[0].earnings = { amountMinor: 10_000, currency: "EUR" };
+    testContext.state = state;
+    window.worklyDesktop = {
+      getFxStatus: vi.fn().mockResolvedValue({
+        state: "fresh",
+        baseCurrency: "USD",
+        provider: "Frankfurter",
+        fetchedAt: "2026-08-12T00:00:00.000Z",
+        sourceDate: "2026-08-11",
+        rates: { EUR: 0.9 },
+      }),
+      convertMoney: vi.fn().mockResolvedValue({
+        ok: true,
+        money: { amountMinor: 11_111, currency: "USD" },
+      }),
+      refreshFxRates: vi.fn().mockRejectedValue(new Error("network offline")),
+    } as unknown as NonNullable<Window["worklyDesktop"]>;
+
+    render(<AnalyticsPage />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Refresh rates" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("network offline"),
+    );
+    expect(screen.getByRole("button", { name: "Refresh rates" })).toBeEnabled();
+  });
+
   it("keeps one primary chart, exposes categorized detail, and updates the range accessibly", async () => {
     const { container } = render(<AnalyticsPage />);
 
