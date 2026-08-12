@@ -34,8 +34,8 @@
     "check:cloud": "node scripts/check-cloud-contract.cjs",
     "smoke:win:packaged": "node scripts/smoke-packaged-app.cjs",
     "smoke:win:installer": "node scripts/smoke-windows-installer.cjs",
-    "pack:win": "node scripts/prepare-runtime-config.cjs && node scripts/check-bundled-runtime-config.cjs cloud && pnpm build && electron-builder --win nsis --x64 --publish never && pnpm check:win:fuses && node scripts/check-packaged-runtime-config.cjs cloud",
-    "pack:win:offline": "node scripts/prepare-offline-runtime-config.cjs && node scripts/check-bundled-runtime-config.cjs offline && pnpm build && electron-builder --win nsis --x64 --publish never && pnpm check:win:fuses && node scripts/check-packaged-runtime-config.cjs offline",
+    "pack:win": "node scripts/prepare-runtime-config.cjs && node scripts/check-bundled-runtime-config.cjs cloud && pnpm build && node scripts/run-electron-builder-with-retry.cjs --win nsis --x64 --publish never && pnpm check:win:fuses && node scripts/check-packaged-runtime-config.cjs cloud",
+    "pack:win:offline": "node scripts/prepare-offline-runtime-config.cjs && node scripts/check-bundled-runtime-config.cjs offline && pnpm build && node scripts/run-electron-builder-with-retry.cjs --win nsis --x64 --publish never && pnpm check:win:fuses && node scripts/check-packaged-runtime-config.cjs offline",
     "pack:win:dir": "node scripts/prepare-offline-runtime-config.cjs && node scripts/check-bundled-runtime-config.cjs offline && pnpm build && electron-builder --win dir --x64 --publish never && pnpm check:win:fuses && node scripts/check-packaged-runtime-config.cjs offline"
   },
   "dependencies": {
