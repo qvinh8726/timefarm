@@ -1,6 +1,6 @@
 begin;
 
-select plan(58);
+select plan(61);
 
 select has_table('public', 'profiles', 'profiles table exists');
 select has_column('public', 'profiles', 'workspace_id', 'profiles carry a workspace claim');
@@ -193,6 +193,41 @@ select ok(
     'EXECUTE'
   ),
   'authenticated clients can execute change-feed pulls'
+);
+select ok(
+  not exists (
+    select 1
+    from pg_proc as procedure
+    join pg_namespace as namespace
+      on namespace.oid = procedure.pronamespace
+    cross join lateral aclexplode(
+      coalesce(
+        procedure.proacl,
+        acldefault('f', procedure.proowner)
+      )
+    ) as privilege
+    where namespace.nspname = 'public'
+      and procedure.oid = 'public.workly_acquire_timer_lease(uuid,integer)'::regprocedure
+      and privilege.grantee = 0
+      and privilege.privilege_type = 'EXECUTE'
+  ),
+  'PUBLIC cannot execute timer lease acquisition'
+);
+select ok(
+  not has_function_privilege(
+    'anon',
+    'public.workly_acquire_timer_lease(uuid,integer)',
+    'EXECUTE'
+  ),
+  'anon cannot execute timer lease acquisition'
+);
+select ok(
+  has_function_privilege(
+    'authenticated',
+    'public.workly_acquire_timer_lease(uuid,integer)',
+    'EXECUTE'
+  ),
+  'authenticated clients can execute timer lease acquisition'
 );
 select ok(
   not has_table_privilege('anon', 'public.sync_changes', 'SELECT'),

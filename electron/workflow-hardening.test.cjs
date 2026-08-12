@@ -5,6 +5,20 @@ const test = require("node:test");
 
 const repositoryRoot = path.join(__dirname, "..");
 
+test("one-time production baseline workflow is absent after migration history is established", () => {
+  assert.equal(
+    fs.existsSync(
+      path.join(
+        repositoryRoot,
+        ".github",
+        "workflows",
+        "baseline-production-database.yml",
+      ),
+    ),
+    false,
+  );
+});
+
 function readWorkflow(name) {
   return fs.readFileSync(
     path.join(repositoryRoot, ".github", "workflows", name),
