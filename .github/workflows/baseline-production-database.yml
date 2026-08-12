@@ -72,14 +72,17 @@ jobs:
         run: |
           supabase db dump --linked --schema public --file hosted-schema.sql
           for sentinel in \
-            'CREATE TABLE public.sync_entity_versions' \
+            'sync_entity_versions' \
             'workly_apply_sync_operation' \
             'workly_bootstrap_page_v2' \
             'workly_get_entity_revisions'; do
-            grep -F "$sentinel" hosted-schema.sql >/dev/null
+            if ! grep -F "$sentinel" hosted-schema.sql >/dev/null; then
+              echo "Refusing to baseline: hosted migration 0005 sentinel is missing ($sentinel)." >&2
+              exit 1
+            fi
           done
           for forbidden in \
-            'CREATE TABLE public.sync_change_retention' \
+            'sync_change_retention' \
             'workly_apply_sync_operation_cas_unchecked' \
             'work_sessions_user_latest_completed_idx'; do
             if grep -F "$forbidden" hosted-schema.sql >/dev/null; then
