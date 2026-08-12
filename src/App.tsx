@@ -1582,8 +1582,6 @@ function Workspace() {
           ref={mobileMoreMenuRef}
           id="mobile-more-menu"
           className={`secondary-nav ${mobileMoreOpen ? "mobile-open" : ""}`}
-          aria-hidden={mobileMoreOpen ? undefined : true}
-          {...(!mobileMoreOpen ? { inert: true } : {})}
           aria-label={
             language === "vi" ? "Tài khoản và cài đặt" : "Account and settings"
           }
