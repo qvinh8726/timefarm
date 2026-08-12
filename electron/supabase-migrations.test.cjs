@@ -28,7 +28,20 @@ test("keeps Supabase migrations contiguous and ordered", () => {
     "0005_optimistic_revisions.sql",
     "0006_production_hardening.sql",
     "0007_sync_contract_and_retention.sql",
+    "0008_timer_lease_privileges.sql",
   ]);
+});
+
+test("repairs legacy timer-lease grants without exposing the RPC to anonymous clients", () => {
+  const privilegeRepair = sql["0008_timer_lease_privileges.sql"];
+  assert.match(
+    privilegeRepair,
+    /revoke all on function public\.workly_acquire_timer_lease\(uuid, integer\)\s+from public, anon/,
+  );
+  assert.match(
+    privilegeRepair,
+    /grant execute on function public\.workly_acquire_timer_lease\(uuid, integer\)\s+to authenticated/,
+  );
 });
 
 test("local Supabase auth accepts the exact desktop OAuth callback", () => {
