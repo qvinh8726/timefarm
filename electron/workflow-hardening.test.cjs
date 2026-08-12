@@ -172,7 +172,7 @@ test("CI smoke-tests an explicit offline installer instead of a fake cloud login
     fs.readFileSync(path.join(repositoryRoot, "package.json"), "utf8"),
   );
 
-  assert.match(workflow, /run:\s*pnpm pack:win:offline/);
+  assert.match(workflow, /^\s+run:\s*pnpm pack:win:offline\s*$/m);
   assert.doesNotMatch(
     workflow,
     /TIMEFARM_SUPABASE_URL:\s*https:\/\/ci-contract\.invalid/,
@@ -185,6 +185,29 @@ test("CI smoke-tests an explicit offline installer instead of a fake cloud login
   assert.match(
     packageJson.scripts["pack:win:offline"],
     /check-packaged-runtime-config\.cjs offline/,
+  );
+  assert.match(
+    packageJson.scripts["pack:win:offline"],
+    /run-electron-builder-with-retry\.cjs --win nsis --x64 --publish never/,
+  );
+});
+
+test("CI and release package scripts use the same bounded transient builder retry", () => {
+  const ciWorkflow = readWorkflow("ci.yml");
+  const releaseWorkflow = readWorkflow("release.yml");
+  const packageJson = JSON.parse(
+    fs.readFileSync(path.join(repositoryRoot, "package.json"), "utf8"),
+  );
+
+  assert.match(ciWorkflow, /^\s+run:\s*pnpm pack:win:offline\s*$/m);
+  assert.match(releaseWorkflow, /^\s+run:\s*pnpm pack:win\s*$/m);
+  assert.match(
+    packageJson.scripts["pack:win"],
+    /run-electron-builder-with-retry\.cjs --win nsis --x64 --publish never/,
+  );
+  assert.match(
+    packageJson.scripts["pack:win:offline"],
+    /run-electron-builder-with-retry\.cjs --win nsis --x64 --publish never/,
   );
 });
 
@@ -256,7 +279,7 @@ test("release builds only unsigned v0 prereleases after source and cloud gates",
   assert.ok(verifyCloud < buildUnsignedInstaller);
   assert.doesNotMatch(workflow, /WINDOWS_CSC_(?:LINK|KEY_PASSWORD)/);
   assert.match(buildBlock, /CSC_IDENTITY_AUTO_DISCOVERY:\s*["']false["']/);
-  assert.match(buildBlock, /pnpm pack:win/);
+  assert.match(buildBlock, /^\s+run:\s*pnpm pack:win\s*$/m);
   assert.match(
     workflow,
     /Smoke-test the unsigned packaged application and installer/,
