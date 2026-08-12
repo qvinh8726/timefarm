@@ -1,32 +1,20 @@
-const fs = require("node:fs");
-const path = require("node:path");
-const { assertPublicSupabaseClientKey } = require("./supabase-client-key.cjs");
+const { assertRuntimeConfigFile } = require("./runtime-config-contract.cjs");
 
-const configPath = path.join(
-  __dirname,
-  "..",
-  "electron",
-  "timefarm.config.json",
-);
-
-if (!fs.existsSync(configPath)) {
-  console.log("No bundled cloud configuration found; packaging offline build.");
-  process.exit(0);
-}
-
-let config;
-try {
-  config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-} catch {
-  console.error("Bundled TimeFarm cloud configuration is not valid JSON.");
+const expectedMode = process.argv[2];
+if (expectedMode !== "cloud" && expectedMode !== "offline") {
+  console.error("Runtime configuration check requires cloud or offline mode.");
   process.exit(1);
 }
 
 try {
-  assertPublicSupabaseClientKey(config?.supabaseAnonKey);
+  assertRuntimeConfigFile(undefined, expectedMode);
 } catch (error) {
-  console.error(error instanceof Error ? error.message : "Invalid client key.");
+  console.error(
+    error instanceof Error ? error.message : "Invalid cloud configuration.",
+  );
   process.exit(1);
 }
 
-console.log("Bundled TimeFarm cloud configuration uses a public client key.");
+console.log(
+  `Bundled TimeFarm runtime configuration is valid ${expectedMode} mode.`,
+);

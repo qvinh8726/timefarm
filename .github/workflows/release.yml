@@ -1,9 +1,9 @@
-name: Signed stable Windows release
+name: Unsigned v0.x Windows prerelease
 
 on:
   push:
     tags:
-      - "v[1-9]*"
+      - "v0.*"
 
 permissions:
   actions: read
@@ -15,8 +15,20 @@ jobs:
   release:
     runs-on: windows-latest
     timeout-minutes: 35
+    environment: production
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require release commit on master
+        shell: pwsh
+        run: |
+          git fetch --no-tags origin "+refs/heads/master:refs/remotes/origin/master"
+          git merge-base --is-ancestor $env:GITHUB_SHA origin/master
+          if ($LASTEXITCODE -ne 0) {
+            throw "Release tags must point to a commit that belongs to origin/master."
+          }
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -24,20 +36,21 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - name: Require release credentials and public cloud configuration
+      - name: Require public cloud configuration and exact release version
+        id: release_contract
         shell: pwsh
         env:
-          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
           TIMEFARM_SUPABASE_URL: ${{ secrets.TIMEFARM_SUPABASE_URL }}
           TIMEFARM_SUPABASE_ANON_KEY: ${{ secrets.TIMEFARM_SUPABASE_ANON_KEY }}
         run: |
-          if (-not $env:CSC_LINK -or -not $env:CSC_KEY_PASSWORD) {
-            throw "Signed releases require WINDOWS_CSC_LINK and WINDOWS_CSC_KEY_PASSWORD."
-          }
           if (-not $env:TIMEFARM_SUPABASE_URL -or -not $env:TIMEFARM_SUPABASE_ANON_KEY) {
             throw "Cloud-enabled releases require TIMEFARM_SUPABASE_URL and TIMEFARM_SUPABASE_ANON_KEY."
           }
+          node scripts/check-release-contract.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $packageVersion = node -p "require('./package.json').version"
+          "installer=release/TimeFarm-$packageVersion-Setup.exe" >> $env:GITHUB_OUTPUT
+          "sbom=release/TimeFarm-$packageVersion.spdx.json" >> $env:GITHUB_OUTPUT
       - name: Verify source
         run: |
           pnpm format:check
@@ -49,56 +62,66 @@ jobs:
           pnpm test:coverage
           pnpm build
           pnpm check:bundle
-          pnpm audit --prod --audit-level high
+          pnpm audit --audit-level high
       - name: Verify hosted database contract
         env:
           TIMEFARM_SUPABASE_URL: ${{ secrets.TIMEFARM_SUPABASE_URL }}
           TIMEFARM_SUPABASE_ANON_KEY: ${{ secrets.TIMEFARM_SUPABASE_ANON_KEY }}
         run: pnpm check:cloud
-      - name: Build signed installer
+      - name: Build unsigned installer
         env:
-          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
           TIMEFARM_SUPABASE_URL: ${{ secrets.TIMEFARM_SUPABASE_URL }}
           TIMEFARM_SUPABASE_ANON_KEY: ${{ secrets.TIMEFARM_SUPABASE_ANON_KEY }}
+        shell: pwsh
         run: pnpm pack:win
-      - name: Smoke-test the signed packaged application and installer
+      - name: Smoke-test the unsigned packaged application and installer
         run: |
           pnpm smoke:win:packaged
           pnpm smoke:win:installer
       - name: Create checksums
         shell: pwsh
         run: |
-          $installer = Get-ChildItem -LiteralPath "release" -Filter "TimeFarm-*-Setup.exe" |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
-          if (-not $installer) { throw "Signed installer was not created." }
-          $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
-          if ($signature.Status -ne "Valid") {
-            throw "Installer signature is not valid: $($signature.Status)"
+          $installerPath = "${{ steps.release_contract.outputs.installer }}"
+          if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
+            throw "Expected unsigned installer was not created: $installerPath"
           }
-          Get-FileHash -Algorithm SHA256 -LiteralPath $installer.FullName |
+          $signature = Get-AuthenticodeSignature -LiteralPath $installerPath
+          if ($signature.Status -ne "NotSigned") {
+            throw "v0.x prereleases must remain unsigned; Authenticode status was $($signature.Status)."
+          }
+          Get-FileHash -Algorithm SHA256 -LiteralPath $installerPath |
             ForEach-Object { "$($_.Hash.ToLower())  $([IO.Path]::GetFileName($_.Path))" } |
             Set-Content -Encoding ascii -LiteralPath "release/SHA256SUMS.txt"
 
       - name: Generate SPDX SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
-          path: .
+          path: release/win-unpacked
           format: spdx-json
-          output-file: release/TimeFarm-${{ github.ref_name }}.spdx.json
+          output-file: ${{ steps.release_contract.outputs.sbom }}
           upload-artifact: false
           upload-release-assets: false
 
       - name: Attest installer against SBOM
         uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b # v2.4.0
         with:
-          subject-path: release/TimeFarm-*-Setup.exe
-          sbom-path: release/TimeFarm-${{ github.ref_name }}.spdx.json
+          subject-path: ${{ steps.release_contract.outputs.installer }}
+          sbom-path: ${{ steps.release_contract.outputs.sbom }}
+
+      - name: Attest installer build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ steps.release_contract.outputs.installer }}
 
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
+          prerelease: true
+          body: |
+            > **Unsigned Windows beta:** this v0.x prerelease has no Authenticode signature, so Windows may show **Unknown Publisher** or a SmartScreen warning. Verify `SHA256SUMS.txt` before running the installer.
+
+            The installer, checksum, SPDX SBOM, and GitHub artifact attestation below were produced by the protected `production` release job from the tagged commit on `master`.
           files: |
-            release/TimeFarm-*-Setup.exe
+            ${{ steps.release_contract.outputs.installer }}
             release/SHA256SUMS.txt
-            release/TimeFarm-${{ github.ref_name }}.spdx.json
+            ${{ steps.release_contract.outputs.sbom }}

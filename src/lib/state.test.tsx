@@ -142,4 +142,37 @@ describe("split app-store contexts", () => {
       ok: false,
     });
   });
+
+  it("publishes wiped desktop state while surfacing incomplete auxiliary cleanup", async () => {
+    const empty = createEmptyState();
+    window.worklyDesktop = {
+      loadState: vi.fn().mockResolvedValue(empty),
+      resetLocalData: vi.fn().mockResolvedValue({
+        cancelled: false,
+        state: empty,
+        cleanupWarning: "Some device-only files are still present.",
+      }),
+    } as unknown as typeof window.worklyDesktop;
+    const observedActions: AppStoreActions[] = [];
+    render(
+      <AppStoreProvider>
+        <ActionsProbe
+          onRender={(actions) => {
+            observedActions.push(actions);
+          }}
+        />
+        <StateProbe />
+      </AppStoreProvider>,
+    );
+
+    await screen.findByText("system:0");
+    const actions = observedActions.at(-1);
+    if (!actions) throw new Error("Actions were not provided.");
+
+    await expect(actions.resetLocalData()).resolves.toEqual({
+      ok: false,
+      message: "Some device-only files are still present.",
+    });
+    expect(screen.getByText("system:0")).toBeTruthy();
+  });
 });

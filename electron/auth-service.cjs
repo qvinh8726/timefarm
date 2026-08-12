@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { randomBytes: secureRandomBytes } = require("node:crypto");
 const { createClient } = require("@supabase/supabase-js");
+const { assertCloudConfiguration } = require("./cloud-configuration.cjs");
 
 // Auth hydration is allowed to improve a local session, never to hold up the
 // local-first timer path. Keep this comfortably below the timer-lease RPC
@@ -157,38 +158,44 @@ function readBundledConfiguration() {
   return {};
 }
 
-function readConfiguration(environment = process.env) {
-  const bundled = environment === process.env ? readBundledConfiguration() : {};
-  const url =
+function readConfiguration(
+  environment = process.env,
+  bundledConfiguration = environment === process.env
+    ? readBundledConfiguration()
+    : {},
+) {
+  const environmentUrl =
     environment.TIMEFARM_SUPABASE_URL ||
     environment.WORKLY_SUPABASE_URL ||
-    environment.VITE_SUPABASE_URL ||
-    bundled.supabaseUrl ||
-    "";
-  const anonKey =
+    environment.VITE_SUPABASE_URL;
+  const environmentAnonKey =
     environment.TIMEFARM_SUPABASE_ANON_KEY ||
     environment.WORKLY_SUPABASE_ANON_KEY ||
-    environment.VITE_SUPABASE_ANON_KEY ||
-    bundled.supabaseAnonKey ||
-    "";
+    environment.VITE_SUPABASE_ANON_KEY;
+  const hasEnvironmentConfiguration = Boolean(
+    environmentUrl || environmentAnonKey,
+  );
+  const bundled = bundledConfiguration ?? {};
+  if (!hasEnvironmentConfiguration && bundled.mode === "offline")
+    return { configured: false };
+  // URL and key form one configuration boundary. Never combine an override
+  // for one half with an ASAR-bundled value for the other half.
+  const url = hasEnvironmentConfiguration
+    ? environmentUrl || ""
+    : bundled.supabaseUrl || "";
+  const anonKey = hasEnvironmentConfiguration
+    ? environmentAnonKey || ""
+    : bundled.supabaseAnonKey || "";
   const redirectUrl =
     environment.TIMEFARM_OAUTH_REDIRECT_URL ||
     environment.WORKLY_OAUTH_REDIRECT_URL ||
     bundled.oauthRedirectUrl ||
     "timefarm://auth/callback";
   try {
-    const parsed = new URL(url);
-    if (
-      parsed.protocol !== "https:" &&
-      parsed.hostname !== "localhost" &&
-      parsed.hostname !== "127.0.0.1"
-    )
-      return { configured: false };
+    return assertCloudConfiguration({ url, anonKey, redirectUrl });
   } catch {
     return { configured: false };
   }
-  if (!anonKey) return { configured: false };
-  return { configured: true, url, anonKey, redirectUrl };
 }
 
 function sanitizeUser(user) {
@@ -297,6 +304,7 @@ class SupabaseAuthService {
   constructor({
     userDataPath,
     safeStorage,
+    fileSystem = fs,
     environment = process.env,
     hydrationTimeoutMs = DEFAULT_HYDRATION_TIMEOUT_MS,
     operationTimeoutMs = DEFAULT_OPERATION_TIMEOUT_MS,
@@ -317,7 +325,20 @@ class SupabaseAuthService {
       throw new TypeError("Auth now must be a function.");
     if (typeof randomBytes !== "function")
       throw new TypeError("Auth randomBytes must be a function.");
+    if (
+      !fileSystem ||
+      typeof fileSystem.existsSync !== "function" ||
+      typeof fileSystem.lstatSync !== "function" ||
+      typeof fileSystem.readFileSync !== "function" ||
+      typeof fileSystem.writeFileSync !== "function" ||
+      typeof fileSystem.rmSync !== "function"
+    ) {
+      throw new TypeError(
+        "Auth fileSystem must provide synchronous read, write, stat, existence, and removal operations.",
+      );
+    }
     this.safeStorage = safeStorage;
+    this.fileSystem = fileSystem;
     this.configuration = readConfiguration(environment);
     this.sessionPath = path.join(userDataPath, "auth-session.bin");
     this.pendingOAuthPath = path.join(userDataPath, "auth-oauth-pending.bin");
@@ -420,12 +441,12 @@ class SupabaseAuthService {
   loadPendingOAuth() {
     if (
       !this.isSecureStorageAvailable() ||
-      !fs.existsSync(this.pendingOAuthPath)
+      !this.fileSystem.existsSync(this.pendingOAuthPath)
     )
       return null;
     try {
       const encrypted = Buffer.from(
-        fs.readFileSync(this.pendingOAuthPath, "utf8"),
+        this.fileSystem.readFileSync(this.pendingOAuthPath, "utf8"),
         "base64",
       );
       const pending = normalizePendingOAuth(
@@ -489,7 +510,7 @@ class SupabaseAuthService {
         JSON.stringify({ version: OAUTH_PENDING_VERSION, ...pending }),
       )
       .toString("base64");
-    fs.writeFileSync(this.pendingOAuthPath, encrypted, {
+    this.fileSystem.writeFileSync(this.pendingOAuthPath, encrypted, {
       encoding: "utf8",
       mode: 0o600,
     });
@@ -504,7 +525,7 @@ class SupabaseAuthService {
     this.pendingOAuthExpiresAt = 0;
     this.pendingOAuthStorageItems = {};
     try {
-      fs.rmSync(this.pendingOAuthPath, { force: true });
+      this.fileSystem.rmSync(this.pendingOAuthPath, { force: true });
     } catch {
       /* best-effort cleanup */
     }
@@ -520,7 +541,7 @@ class SupabaseAuthService {
     this.pendingOAuthFlowId = null;
     this.pendingOAuthExpiresAt = 0;
     try {
-      fs.rmSync(this.pendingOAuthPath, { force: true });
+      this.fileSystem.rmSync(this.pendingOAuthPath, { force: true });
     } catch {
       /* best-effort cleanup */
     }
@@ -530,12 +551,12 @@ class SupabaseAuthService {
   readStoredSession() {
     if (
       !this.safeStorage?.isEncryptionAvailable?.() ||
-      !fs.existsSync(this.sessionPath)
+      !this.fileSystem.existsSync(this.sessionPath)
     )
       return null;
     try {
       const encrypted = Buffer.from(
-        fs.readFileSync(this.sessionPath, "utf8"),
+        this.fileSystem.readFileSync(this.sessionPath, "utf8"),
         "base64",
       );
       const stored = normalizeStoredSession(
@@ -564,7 +585,7 @@ class SupabaseAuthService {
     const encrypted = this.safeStorage
       .encryptString(JSON.stringify(envelope))
       .toString("base64");
-    fs.writeFileSync(this.sessionPath, encrypted, {
+    this.fileSystem.writeFileSync(this.sessionPath, encrypted, {
       encoding: "utf8",
       mode: 0o600,
     });
@@ -572,7 +593,7 @@ class SupabaseAuthService {
 
   clearStoredSession() {
     try {
-      fs.rmSync(this.sessionPath, { force: true });
+      this.fileSystem.rmSync(this.sessionPath, { force: true });
     } catch {
       /* best-effort cleanup */
     }
@@ -904,8 +925,7 @@ class SupabaseAuthService {
 
   async signOut() {
     ++this.authGeneration;
-    this.clearStoredSession();
-    this.clearPendingOAuth();
+    this.clearLocalCredentialsForSignOut();
     if (this.client) {
       try {
         await this.waitForRemoteResponse(
@@ -916,13 +936,31 @@ class SupabaseAuthService {
         /* local credential removal still wins */
       }
     }
-    this.clearStoredSession();
-    this.clearPendingOAuth();
+    this.clearLocalCredentialsForSignOut();
     return {
       configured: this.isConfigured(),
       authenticated: false,
       user: null,
     };
+  }
+
+  clearLocalCredentialsForSignOut() {
+    this.clearStoredSession();
+    this.clearPendingOAuth();
+    const removed = [this.sessionPath, this.pendingOAuthPath].every(
+      (credentialPath) => {
+        try {
+          this.fileSystem.lstatSync(credentialPath);
+          return false;
+        } catch (error) {
+          return error?.code === "ENOENT";
+        }
+      },
+    );
+    if (!removed)
+      throw new Error(
+        "TimeFarm could not remove the encrypted local sign-in credentials from this device.",
+      );
   }
 
   assertConfigured() {

@@ -101,7 +101,7 @@ TimeFarm is especially suited to freelancers, consultants, independent creators,
 - Fetch optional reference conversion from [Frankfurter](https://frankfurter.dev/) with timeouts and complete-rate validation.
 - Show the reference date and stale-cache status instead of presenting old rates as current.
 
-### Optional multi-device synchronization
+### Google sign-in and optional multi-device synchronization
 
 When configured by an operator, the source includes:
 
@@ -111,7 +111,7 @@ When configured by an operator, the source includes:
 - Per-entity optimistic revisions and explicit **Keep local** / **Use cloud** conflict choices.
 - An online timer lease that reduces simultaneous starts across authenticated devices.
 
-This capability is **not enabled in the downloadable v0.2.2 installer** and has not been validated against a hosted Supabase project for this release.
+The current source treats Google sign-in and Supabase synchronization as first-class desktop capabilities while keeping the timer offline-first. They are **not enabled in the downloadable v0.2.2 installer** because that artifact contains no public Supabase runtime configuration. A future cloud-enabled release must pass the hosted contract, exact OAuth callback, explicit artifact-mode, unsigned-installer, and physical multi-device gates described below.
 
 ## Download and install on Windows
 
@@ -200,7 +200,7 @@ Supabase is not required for local time tracking. To develop or operate cloud si
    - [`0006_production_hardening.sql`](supabase/migrations/0006_production_hardening.sql)
    - [`0007_sync_contract_and_retention.sql`](supabase/migrations/0007_sync_contract_and_retention.sql)
 3. Enable Email Auth and, if needed, Google OAuth.
-4. Add `timefarm://auth/callback**` to the accepted redirect patterns.
+4. Add `timefarm://auth/callback?timefarm_state=**` to the accepted redirect URLs. The fixed scheme, host, path, and query-key scope the allowlist to TimeFarm; `**` is required only for the per-login nonce appended by the desktop PKCE flow.
 5. Set the project URL and publishable/anon client key in the terminal that launches or packages TimeFarm. `.env.example` documents the accepted names, but Electron does not automatically load `.env` files:
 
    ```dotenv
@@ -228,7 +228,7 @@ pnpm test
 pnpm test:coverage
 pnpm build
 pnpm check:bundle
-pnpm audit --prod --audit-level high
+pnpm audit --audit-level high
 ```
 
 Database contract tests require a running local Supabase stack:
@@ -251,13 +251,13 @@ pnpm smoke:win:packaged
 Build an offline NSIS installer without bundling cloud configuration:
 
 ```powershell
-pnpm build
-pnpm exec electron-builder --win nsis --x64 --publish never
-pnpm check:win:fuses
+pnpm pack:win:offline
 pnpm smoke:win:installer
 ```
 
-`pnpm pack:win` is reserved for a configured cloud build and validates the supplied public runtime configuration first. Artifacts are written to `release/`, which is excluded from Git.
+Every package build now contains an explicit `cloud` or `offline` runtime-mode marker. This replaces any stale ignored configuration from a previous build, and the post-package check reads the final ASAR to prove that the requested mode was actually shipped. `pnpm pack:win` is reserved for a configured cloud build; `pnpm pack:win:offline` creates an offline NSIS installer; `pnpm pack:win:dir` creates an offline unpacked build. Artifacts are written to `release/`, which is excluded from Git.
+
+The automated GitHub release workflow is deliberately limited to `v0.*` tags and always publishes a prerelease from the protected `production` environment. It disables certificate auto-discovery and fails unless the installer is actually `NotSigned`; the release must retain the visible Unknown Publisher/SmartScreen disclosure. Source and hosted-cloud checks, packaged-app and installer smoke tests, SHA-256 checksums, the packaged SPDX SBOM, and GitHub SBOM/build-provenance attestations remain mandatory. Code signing is deferred to a future stable release line.
 
 ## Beta limitations
 

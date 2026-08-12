@@ -578,6 +578,22 @@ function FxNotice({
     void desktop
       .refreshFxRates()
       .then(setStatus)
+      .catch((error) =>
+        setStatus((current) => ({
+          state: "unavailable",
+          baseCurrency: accountCurrency,
+          provider: current?.provider ?? "Frankfurter",
+          fetchedAt: current?.fetchedAt ?? null,
+          sourceDate: current?.sourceDate ?? null,
+          rates: current?.rates ?? {},
+          error:
+            error instanceof Error
+              ? error.message
+              : language === "vi"
+                ? "Không thể cập nhật tỷ giá."
+                : "Unable to refresh exchange rates.",
+        })),
+      )
       .finally(() => setRefreshing(false));
   };
   const converted = Object.values(conversions).filter(

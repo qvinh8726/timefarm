@@ -98,6 +98,7 @@ import {
   goalStatusLabel,
 } from "./components/CommonVisuals";
 import { Field, Modal } from "./components/Modal";
+import { LocalDataResetConfirmation } from "./components/LocalDataResetConfirmation";
 import "./load-failure.css";
 
 export { Modal } from "./components/Modal";
@@ -214,15 +215,6 @@ function isActiveWorkSession(value: unknown): value is WorkSession {
   );
 }
 
-function confirmBrowserLocalReset(language: AppLanguage): boolean {
-  if (window.worklyDesktop?.resetLocalData) return true;
-  return window.confirm(
-    language === "vi"
-      ? "Xóa toàn bộ dữ liệu TimeFarm trong trình duyệt này? Hành động này không thể hoàn tác."
-      : "Delete all TimeFarm data in this browser? This cannot be undone.",
-  );
-}
-
 export function App() {
   const { state, isLoading, loadError, reload } = useAppStore();
   const {
@@ -240,7 +232,7 @@ export function App() {
         ? null
         : { status: "not_found" },
   );
-  const shellLanguage = defaultLanguage();
+  const [shellLanguage, setShellLanguage] = useState(defaultLanguage);
   const legacyRecoveryRequired = Boolean(
     legacyImport &&
       ["invalid_data", "filesystem_error", "unsupported_version"].includes(
@@ -269,7 +261,7 @@ export function App() {
   }, []);
 
   const theme = state?.account ? state.preferences.theme : "light";
-  const documentLanguage = state?.account?.language ?? "vi";
+  const documentLanguage = state?.account?.language ?? shellLanguage;
   useEffect(() => {
     document.documentElement.lang = documentLanguage;
     document.title =
@@ -386,6 +378,14 @@ export function App() {
         }}
       />
     );
+  if (auth.statusUnavailable)
+    return (
+      <AuthStatusUnavailableScreen
+        language={shellLanguage}
+        message={auth.error}
+        onRetry={() => void refreshAuth().catch(() => {})}
+      />
+    );
   if (auth.configured && !auth.authenticated)
     return <AuthenticationScreen language={shellLanguage} />;
   const needsCloudBootstrap = Boolean(
@@ -428,6 +428,7 @@ export function App() {
         authUser={auth.user}
         offlineMode={!auth.configured}
         initialLanguage={shellLanguage}
+        onLanguageChange={setShellLanguage}
       />
     );
   if (
@@ -440,6 +441,46 @@ export function App() {
   if (auth.authenticated && auth.user && !state.account.authUserId)
     return <ClaimLocalAccountScreen />;
   return <Workspace />;
+}
+
+function AuthStatusUnavailableScreen({
+  language,
+  message,
+  onRetry,
+}: {
+  language: AppLanguage;
+  message?: string;
+  onRetry: () => void;
+}) {
+  return (
+    <main className="ownership-shell">
+      <section className="ownership-card load-failure-card">
+        <TimeFarmBrand />
+        <span className="eyebrow">
+          {language === "vi" ? "XÁC THỰC" : "AUTHENTICATION"}
+        </span>
+        <h1>
+          {language === "vi"
+            ? "Không thể đọc trạng thái đăng nhập"
+            : "Sign-in status is unavailable"}
+        </h1>
+        <p>
+          {language === "vi"
+            ? "TimeFarm đã dừng trước khi mở workspace để không vô tình bỏ qua đăng nhập hoặc liên kết dữ liệu cloud."
+            : "TimeFarm stopped before opening the workspace so it cannot accidentally bypass sign-in or cloud ownership checks."}
+        </p>
+        {message && (
+          <div className="load-error-detail" role="alert">
+            {message}
+          </div>
+        )}
+        <button className="button primary full" onClick={onRetry}>
+          <RotateCcw size={17} />
+          {language === "vi" ? "Thử lại" : "Try again"}
+        </button>
+      </section>
+    </main>
+  );
 }
 
 function LegacyImportRecoveryScreen({
@@ -660,6 +701,7 @@ function AuthenticationScreen({ language }: { language: AppLanguage }) {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [resetBusy, setResetBusy] = useState(false);
+  const [resetConfirmationOpen, setResetConfirmationOpen] = useState(false);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -703,7 +745,7 @@ function AuthenticationScreen({ language }: { language: AppLanguage }) {
   };
 
   const clearLocalData = async () => {
-    if (resetBusy || !confirmBrowserLocalReset(language)) return;
+    if (resetBusy) return;
     setResetBusy(true);
     setMessage("");
     try {
@@ -712,6 +754,7 @@ function AuthenticationScreen({ language }: { language: AppLanguage }) {
         setMessage(result.message);
     } finally {
       setResetBusy(false);
+      setResetConfirmationOpen(false);
     }
   };
 
@@ -757,6 +800,7 @@ function AuthenticationScreen({ language }: { language: AppLanguage }) {
             <button
               type="button"
               className={mode === "sign-in" ? "active" : ""}
+              aria-pressed={mode === "sign-in"}
               onClick={() => setMode("sign-in")}
             >
               {translate(language, "authentication", "signIn")}
@@ -764,6 +808,7 @@ function AuthenticationScreen({ language }: { language: AppLanguage }) {
             <button
               type="button"
               className={mode === "sign-up" ? "active" : ""}
+              aria-pressed={mode === "sign-up"}
               onClick={() => setMode("sign-up")}
             >
               {translate(language, "authentication", "signUp")}
@@ -847,7 +892,11 @@ function AuthenticationScreen({ language }: { language: AppLanguage }) {
               required
             />
           </Field>
-          {message && <p className="auth-message">{message}</p>}
+          {message && (
+            <p className="auth-message" role="alert" aria-live="assertive">
+              {message}
+            </p>
+          )}
           <button className="button primary full" disabled={busy} type="submit">
             {busy
               ? translate(language, "authentication", "processing")
@@ -872,7 +921,7 @@ function AuthenticationScreen({ language }: { language: AppLanguage }) {
                 className="button danger-quiet full"
                 type="button"
                 disabled={busy || resetBusy}
-                onClick={() => void clearLocalData()}
+                onClick={() => setResetConfirmationOpen(true)}
               >
                 {resetBusy ? (
                   <LoaderCircle size={16} className="spin" />
@@ -883,6 +932,14 @@ function AuthenticationScreen({ language }: { language: AppLanguage }) {
                   ? "Xóa dữ liệu trên thiết bị"
                   : "Clear device data"}
               </button>
+              {resetConfirmationOpen && (
+                <LocalDataResetConfirmation
+                  language={language}
+                  busy={resetBusy}
+                  onCancel={() => setResetConfirmationOpen(false)}
+                  onConfirm={clearLocalData}
+                />
+              )}
             </div>
           )}
         </form>
@@ -895,10 +952,12 @@ function Onboarding({
   authUser,
   offlineMode,
   initialLanguage,
+  onLanguageChange,
 }: {
   authUser: SafeAuthUser | null;
   offlineMode: boolean;
   initialLanguage: AppLanguage;
+  onLanguageChange: (language: AppLanguage) => void;
 }) {
   const { initializeAccount } = useAppStoreActions();
   const [language, setLanguage] = useState<AppLanguage>(initialLanguage);
@@ -987,7 +1046,11 @@ function Onboarding({
               type="button"
               disabled={busy}
               className={language === "vi" ? "selected" : ""}
-              onClick={() => setLanguage("vi")}
+              aria-pressed={language === "vi"}
+              onClick={() => {
+                setLanguage("vi");
+                onLanguageChange("vi");
+              }}
             >
               {translate(language, "onboarding", "vietnamese")}
             </button>
@@ -995,7 +1058,11 @@ function Onboarding({
               type="button"
               disabled={busy}
               className={language === "en" ? "selected" : ""}
-              onClick={() => setLanguage("en")}
+              aria-pressed={language === "en"}
+              onClick={() => {
+                setLanguage("en");
+                onLanguageChange("en");
+              }}
             >
               {translate(language, "onboarding", "english")}
             </button>
@@ -1101,6 +1168,7 @@ function ClaimLocalAccountScreen() {
   const [accepted, setAccepted] = useState(false);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState<"claim" | "sign-out" | "reset" | null>(null);
+  const [resetConfirmationOpen, setResetConfirmationOpen] = useState(false);
   const claim = async () => {
     if (busy) return;
     setBusy("claim");
@@ -1127,7 +1195,7 @@ function ClaimLocalAccountScreen() {
     }
   };
   const clearLocalData = async () => {
-    if (busy || !confirmBrowserLocalReset(language)) return;
+    if (busy) return;
     setBusy("reset");
     setMessage("");
     try {
@@ -1136,6 +1204,7 @@ function ClaimLocalAccountScreen() {
         setMessage(result.message);
     } finally {
       setBusy(null);
+      setResetConfirmationOpen(false);
     }
   };
   return (
@@ -1194,7 +1263,7 @@ function ClaimLocalAccountScreen() {
               className="button danger-quiet full"
               type="button"
               disabled={Boolean(busy)}
-              onClick={() => void clearLocalData()}
+              onClick={() => setResetConfirmationOpen(true)}
             >
               {busy === "reset" ? (
                 <LoaderCircle size={16} className="spin" />
@@ -1204,6 +1273,14 @@ function ClaimLocalAccountScreen() {
               {translate(language, "ownership", "resetAction")}
             </button>
           </div>
+          {resetConfirmationOpen && (
+            <LocalDataResetConfirmation
+              language={language}
+              busy={busy === "reset"}
+              onCancel={() => setResetConfirmationOpen(false)}
+              onConfirm={clearLocalData}
+            />
+          )}
         </div>
       </section>
     </main>
@@ -1217,6 +1294,7 @@ function AccountMismatchScreen() {
   const language = account.language;
   const [busy, setBusy] = useState<"sign-out" | "reset" | null>(null);
   const [message, setMessage] = useState("");
+  const [resetConfirmationOpen, setResetConfirmationOpen] = useState(false);
   const leaveAccount = async () => {
     if (busy) return;
     setBusy("sign-out");
@@ -1232,7 +1310,7 @@ function AccountMismatchScreen() {
     }
   };
   const clearLocalData = async () => {
-    if (busy || !confirmBrowserLocalReset(language)) return;
+    if (busy) return;
     setBusy("reset");
     setMessage("");
     try {
@@ -1241,6 +1319,7 @@ function AccountMismatchScreen() {
         setMessage(result.message);
     } finally {
       setBusy(null);
+      setResetConfirmationOpen(false);
     }
   };
   return (
@@ -1276,7 +1355,7 @@ function AccountMismatchScreen() {
             <button
               className="button danger-quiet full"
               disabled={Boolean(busy)}
-              onClick={() => void clearLocalData()}
+              onClick={() => setResetConfirmationOpen(true)}
             >
               {busy === "reset" ? (
                 <LoaderCircle size={16} className="spin" />
@@ -1286,6 +1365,14 @@ function AccountMismatchScreen() {
               {translate(language, "ownership", "resetAction")}
             </button>
           </div>
+          {resetConfirmationOpen && (
+            <LocalDataResetConfirmation
+              language={language}
+              busy={busy === "reset"}
+              onCancel={() => setResetConfirmationOpen(false)}
+              onConfirm={clearLocalData}
+            />
+          )}
         </div>
       </section>
     </main>
@@ -1300,6 +1387,8 @@ function Workspace() {
   const [page, setPage] = useState<Page>("dashboard");
   const [dialog, setDialog] = useState<Dialog>(null);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
+  const mobileMoreButtonRef = useRef<HTMLButtonElement | null>(null);
+  const mobileMoreMenuRef = useRef<HTMLElement | null>(null);
   const [recoveryOpen, setRecoveryOpen] = useState(() => Boolean(active));
 
   useEffect(() => {
@@ -1326,6 +1415,36 @@ function Workspace() {
       });
     });
   }, [reload]);
+
+  useEffect(() => {
+    if (!mobileMoreOpen) return undefined;
+    mobileMoreMenuRef.current
+      ?.querySelector<HTMLButtonElement>("button:not([disabled])")
+      ?.focus();
+    const close = (event: Event) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (
+        mobileMoreMenuRef.current?.contains(target) ||
+        mobileMoreButtonRef.current?.contains(target)
+      )
+        return;
+      setMobileMoreOpen(false);
+      mobileMoreButtonRef.current?.focus();
+    };
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setMobileMoreOpen(false);
+      mobileMoreButtonRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", keydown);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", keydown);
+    };
+  }, [mobileMoreOpen]);
 
   const nav: { id: Page; icon: ReactNode; label: string }[] = [
     {
@@ -1446,6 +1565,7 @@ function Workspace() {
             </button>
           ))}
           <button
+            ref={mobileMoreButtonRef}
             className={`nav-item mobile-more-button ${mobileMoreOpen ? "active" : ""}`}
             aria-expanded={mobileMoreOpen}
             aria-controls="mobile-more-menu"
@@ -1459,8 +1579,11 @@ function Workspace() {
           {language === "vi" ? "CÁ NHÂN" : "PERSONAL"}
         </span>
         <nav
+          ref={mobileMoreMenuRef}
           id="mobile-more-menu"
           className={`secondary-nav ${mobileMoreOpen ? "mobile-open" : ""}`}
+          aria-hidden={mobileMoreOpen ? undefined : true}
+          {...(!mobileMoreOpen ? { inert: true } : {})}
           aria-label={
             language === "vi" ? "Tài khoản và cài đặt" : "Account and settings"
           }
@@ -1629,6 +1752,8 @@ function SyncPill({
     failed: number;
     conflicts: number;
   } | null>(null);
+  const [syncPending, setSyncPending] = useState(false);
+  const [syncMessage, setSyncMessage] = useState("");
   const refresh = () => {
     const desktop = window.worklyDesktop;
     if (!desktop) return;
@@ -1644,8 +1769,22 @@ function SyncPill({
   }, []);
   const retry = () => {
     const desktop = window.worklyDesktop;
-    if (!desktop) return;
-    void desktop.syncNow().finally(refresh);
+    if (!desktop || syncPending) return;
+    setSyncPending(true);
+    setSyncMessage("");
+    void desktop
+      .syncNow()
+      .catch(() =>
+        setSyncMessage(
+          language === "vi"
+            ? "Không thể đồng bộ lúc này. Dữ liệu vẫn được lưu trên thiết bị."
+            : "Sync is unavailable right now. Your data remains saved on this device.",
+        ),
+      )
+      .finally(() => {
+        setSyncPending(false);
+        refresh();
+      });
   };
   const failed = summary?.failed ?? 0;
   const queued = summary?.queued ?? 0;
@@ -1682,6 +1821,9 @@ function SyncPill({
     <button
       className={`sync-pill ${failed > 0 || conflicts > 0 ? "error" : queued > 0 ? "queued" : ""}`}
       onClick={click}
+      disabled={syncPending}
+      aria-busy={syncPending}
+      aria-describedby={syncMessage ? "sync-pill-message" : undefined}
       title={
         conflicts > 0
           ? language === "vi"
@@ -1694,6 +1836,11 @@ function SyncPill({
     >
       <span className="sync-dot" />
       {text}
+      {syncMessage && (
+        <span id="sync-pill-message" className="visually-hidden" role="alert">
+          {syncMessage}
+        </span>
+      )}
     </button>
   );
 }
@@ -1706,6 +1853,9 @@ function SyncConflictsDialog({ onClose }: { onClose: () => void }) {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [pendingConflictId, setPendingConflictId] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -1742,7 +1892,9 @@ function SyncConflictsDialog({ onClose }: { onClose: () => void }) {
 
   const resolve = async (conflict: SyncConflict) => {
     const desktop = window.worklyDesktop;
-    if (!desktop) return;
+    if (!desktop || pendingConflictId) return;
+    setPendingConflictId(conflict.id);
+    setMessage("");
     try {
       const result = await desktop.resolveSyncConflict(conflict.id);
       if (!result.resolved) {
@@ -1759,12 +1911,16 @@ function SyncConflictsDialog({ onClose }: { onClose: () => void }) {
           ? "Không thể cập nhật trạng thái xung đột."
           : "Could not update the conflict state.",
       );
+    } finally {
+      setPendingConflictId(null);
     }
   };
 
   const applyCloudVersion = async (conflict: SyncConflict) => {
     const desktop = window.worklyDesktop;
-    if (!desktop) return;
+    if (!desktop || pendingConflictId) return;
+    setPendingConflictId(conflict.id);
+    setMessage("");
     try {
       const result = await desktop.acceptRemoteSyncConflict(conflict.id);
       if (!result.accepted) {
@@ -1781,6 +1937,8 @@ function SyncConflictsDialog({ onClose }: { onClose: () => void }) {
           ? "Không thể áp dụng bản cloud."
           : "Could not apply the cloud version.",
       );
+    } finally {
+      setPendingConflictId(null);
     }
   };
 
@@ -1815,6 +1973,7 @@ function SyncConflictsDialog({ onClose }: { onClose: () => void }) {
           : "TimeFarm retained your pending local data rather than automatically overwriting it with a change from another device."
       }
       onClose={onClose}
+      closeLabel={language === "vi" ? "Đóng" : "Close"}
     >
       {loading ? (
         <div className="empty-state compact">
@@ -1858,6 +2017,8 @@ function SyncConflictsDialog({ onClose }: { onClose: () => void }) {
               <div className="sync-conflict-actions">
                 <button
                   className="button ghost compact"
+                  disabled={Boolean(pendingConflictId)}
+                  aria-busy={pendingConflictId === conflict.id}
                   onClick={() => {
                     void resolve(conflict);
                   }}
@@ -1868,6 +2029,8 @@ function SyncConflictsDialog({ onClose }: { onClose: () => void }) {
                 </button>
                 <button
                   className="button ghost compact"
+                  disabled={Boolean(pendingConflictId)}
+                  aria-busy={pendingConflictId === conflict.id}
                   onClick={() => {
                     void applyCloudVersion(conflict);
                   }}
@@ -1879,7 +2042,11 @@ function SyncConflictsDialog({ onClose }: { onClose: () => void }) {
           ))}
         </div>
       )}
-      {message && <p className="form-error">{message}</p>}
+      {message && (
+        <p className="form-error" role="alert" aria-live="assertive">
+          {message}
+        </p>
+      )}
       <div className="modal-actions">
         <button className="button primary" onClick={onClose}>
           <Check size={16} /> {language === "vi" ? "Đóng" : "Close"}
@@ -2218,9 +2385,7 @@ function DashboardPage({
         </div>
       </div>
       <section className="dashboard-command-grid">
-        {!hidden.has("timer") && (
-          <div className="dashboard-hero">{widgets.timer}</div>
-        )}
+        <div className="dashboard-hero">{widgets.timer}</div>
         <aside className="today-summary">
           <div className="today-summary-heading">
             <div>
@@ -2678,7 +2843,9 @@ export function DashboardCustomizeDialog({ onClose }: { onClose: () => void }) {
   const movableOrder = order.filter(
     (id): id is Exclude<DashboardWidgetId, "timer"> => id !== "timer",
   );
-  const hidden = new Set(app.preferences.dashboardHiddenWidgets);
+  const hidden = new Set(
+    app.preferences.dashboardHiddenWidgets.filter((id) => id !== "timer"),
+  );
   const persist = async (partial: Partial<Preferences>) => {
     if (mutationInFlightRef.current) return;
     mutationInFlightRef.current = true;
@@ -2716,7 +2883,7 @@ export function DashboardCustomizeDialog({ onClose }: { onClose: () => void }) {
     [next[index], next[target]] = [next[target], next[index]];
     await persist({ dashboardWidgetOrder: ["timer", ...next] });
   };
-  const toggle = async (id: DashboardWidgetId) => {
+  const toggle = async (id: Exclude<DashboardWidgetId, "timer">) => {
     const next = new Set(hidden);
     if (next.has(id)) next.delete(id);
     else next.add(id);
@@ -2747,17 +2914,12 @@ export function DashboardCustomizeDialog({ onClose }: { onClose: () => void }) {
       }
       onClose={onClose}
       locked={pending}
+      closeLabel={language === "vi" ? "Đóng" : "Close"}
     >
       <div className="dashboard-customize-list" aria-busy={pending}>
         <div className="dashboard-customize-row fixed-widget-row">
           <label>
-            <input
-              data-autofocus
-              type="checkbox"
-              disabled={pending}
-              checked={!hidden.has("timer")}
-              onChange={() => void toggle("timer")}
-            />
+            <input data-autofocus type="checkbox" disabled checked readOnly />
             <span>{dashboardWidgetLabels.timer[language]}</span>
           </label>
           <small>

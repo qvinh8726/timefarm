@@ -1,5 +1,9 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const test = require("node:test");
+const { LocalStateRepository, emptyState } = require("./state-repository.cjs");
 const {
   createCoalescedSyncExecutor,
   SyncService,
@@ -283,6 +287,373 @@ test("hydrates an unknown entity revision and acknowledges the server CAS revisi
   });
   assert.deepEqual(marked, [["revision-op", 1]]);
   assert.equal(calls[1][1].p_expected_revision, 0);
+});
+
+test("claims an outbox operation before awaiting its remote write", async () => {
+  const remote = deferred();
+  const events = [];
+  const queued = { ...operation("claimed-op"), expectedRevision: 0 };
+  const repository = {
+    getQueuedOperations: () => [queued],
+    claimOperation: (id) => {
+      events.push(["claimed", id]);
+      return true;
+    },
+    markOperationSynced: (id, revision) => {
+      events.push(["acknowledged", id, revision]);
+    },
+    markOperationFailed: () => {},
+  };
+  const service = new SyncService({
+    repository,
+    authService: {
+      isConfigured: () => true,
+      getAccessToken: async () => "token",
+      client: {
+        rpc: () => {
+          events.push(["rpc"]);
+          return remote.promise;
+        },
+      },
+    },
+  });
+
+  const running = service.syncNow();
+  await waitForRpcSetup();
+  assert.deepEqual(events, [["claimed", "claimed-op"], ["rpc"]]);
+  remote.resolve({ data: { conflict: false, remoteRevision: 1 }, error: null });
+
+  assert.deepEqual(await running, {
+    state: "complete",
+    processed: 1,
+    failed: 0,
+  });
+  assert.deepEqual(events.at(-1), ["acknowledged", "claimed-op", 1]);
+});
+
+test("uses the durable idempotency key as the cloud operation identity", async () => {
+  const calls = [];
+  const queued = {
+    ...operation("local-row-id"),
+    idempotencyKey: "durable-cloud-key",
+    expectedRevision: 0,
+  };
+  const service = new SyncService({
+    repository: {
+      getQueuedOperations: () => [queued],
+      claimOperation: () => true,
+      markOperationSynced: () => {},
+      markOperationFailed: () => {},
+      setOperationExpectedRevision: () => true,
+    },
+    authService: {
+      isConfigured: () => true,
+      getAccessToken: async () => "token",
+      client: {
+        rpc: async (_name, params) => {
+          calls.push(params.p_operation_id);
+          return {
+            data: { conflict: false, remoteRevision: 1 },
+            error: null,
+          };
+        },
+      },
+    },
+  });
+
+  assert.equal((await service.syncNow()).state, "complete");
+  assert.deepEqual(calls, ["durable-cloud-key"]);
+});
+
+test("retries an uncertain in-flight operation before pulling newer cloud state", async () => {
+  const calls = [];
+  let pending = true;
+  const uncertain = { ...operation("uncertain-op"), expectedRevision: 4 };
+  const repository = {
+    getInFlightOperations: () => (pending ? [uncertain] : []),
+    hasInFlightOperations: () => pending,
+    getQueuedOperations: () => [],
+    markOperationSynced: (id, revision) => {
+      calls.push(["ack", id, revision]);
+      pending = false;
+    },
+    markOperationFailed: () => {},
+    getPullCursor: () => 0,
+    applyRemoteChanges: () => ({ cursor: 0, applied: 0, conflicts: 0 }),
+  };
+  const service = new SyncService({
+    repository,
+    authService: {
+      isConfigured: () => true,
+      getAccessToken: async () => "token",
+      client: {
+        rpc: async (name, params) => {
+          calls.push([name, params.p_operation_id]);
+          return name === "workly_apply_sync_operation"
+            ? { data: { conflict: false, remoteRevision: 5 }, error: null }
+            : { data: [], error: null };
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(await service.syncNow("auth-user-1"), {
+    state: "complete",
+    processed: 1,
+    failed: 0,
+  });
+  assert.deepEqual(calls, [
+    ["workly_apply_sync_operation", "uncertain-op"],
+    ["ack", "uncertain-op", 5],
+    ["workly_pull_changes", undefined],
+  ]);
+});
+
+test("releases an in-flight operation after a confirmed CAS rejection so pull can reconcile it", async () => {
+  const calls = [];
+  let pending = true;
+  const uncertain = { ...operation("stale-in-flight"), expectedRevision: 3 };
+  const repository = {
+    setOperationExpectedRevision: () => true,
+    getInFlightOperations: () => (pending ? [uncertain] : []),
+    hasInFlightOperations: () => pending,
+    getQueuedOperations: () => [],
+    markOperationSynced: () => {
+      throw new Error("a rejected operation must not be acknowledged");
+    },
+    markOperationFailed: (id, message, options) => {
+      calls.push(["failed", id, message, options]);
+      if (options?.uncertain === false) pending = false;
+    },
+    getPullCursor: () => 0,
+    applyRemoteChanges: () => ({ cursor: 0, applied: 0, conflicts: 0 }),
+  };
+  const service = new SyncService({
+    repository,
+    authService: {
+      isConfigured: () => true,
+      getAccessToken: async () => "token",
+      client: {
+        rpc: async (name) => {
+          calls.push([name]);
+          return name === "workly_apply_sync_operation"
+            ? {
+                data: {
+                  conflict: true,
+                  expectedRevision: 3,
+                  currentRevision: 4,
+                },
+                error: null,
+              }
+            : { data: [], error: null };
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(await service.syncNow("auth-user-1"), {
+    state: "partial",
+    processed: 0,
+    failed: 1,
+  });
+  assert.deepEqual(calls, [
+    ["workly_apply_sync_operation"],
+    [
+      "failed",
+      "stale-in-flight",
+      "Cloud revision conflict for work_session/stale-in-flight: expected 3, current 4. Pull the cloud version before retrying.",
+      { uncertain: false },
+    ],
+    ["workly_pull_changes"],
+  ]);
+});
+
+test("releases a newly claimed operation after a coded server rejection", async () => {
+  const failed = [];
+  const repository = {
+    getQueuedOperations: () => [
+      { ...operation("invalid-op"), expectedRevision: 0 },
+    ],
+    claimOperation: () => true,
+    setOperationExpectedRevision: () => true,
+    markOperationSynced: () => {
+      throw new Error("a rejected operation must not be acknowledged");
+    },
+    markOperationFailed: (id, message, options) =>
+      failed.push([id, message, options]),
+  };
+  const service = new SyncService({
+    repository,
+    authService: {
+      isConfigured: () => true,
+      getAccessToken: async () => "token",
+      client: {
+        rpc: async () => ({
+          data: null,
+          error: {
+            code: "22023",
+            message: "Project payload was rejected",
+          },
+        }),
+      },
+    },
+  });
+
+  assert.deepEqual(await service.syncNow(), {
+    state: "partial",
+    processed: 0,
+    failed: 1,
+  });
+  assert.deepEqual(failed, [
+    ["invalid-op", "Project payload was rejected", { uncertain: false }],
+  ]);
+});
+
+test("preserves a local edit made during a deferred push and syncs it after the echoed revision", async () => {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "timefarm-sync-race-"),
+  );
+  const repository = new LocalStateRepository(
+    path.join(directory, "timefarm.db"),
+  );
+  try {
+    const start = "2026-08-10T00:00:00.000Z";
+    const state = emptyState();
+    state.account = {
+      id: "user-1",
+      authUserId: "auth-user-1",
+      displayName: "Minh",
+      country: "VN",
+      language: "vi",
+      currency: "VND",
+      timezone: "Asia/Saigon",
+      createdAt: start,
+    };
+    state.projects = [
+      {
+        id: "project-1",
+        name: "Website",
+        paymentModel: "progressive",
+        color: "#7c3aed",
+        icon: "project",
+        status: "active",
+        createdAt: start,
+        updatedAt: start,
+        syncStatus: "local",
+      },
+    ];
+    state.preferences.theme = "dark";
+    repository.replaceState(state);
+    for (const item of repository.getQueuedOperations(500))
+      repository.markOperationSynced(item.id);
+
+    const firstEdit = structuredClone(state);
+    firstEdit.projects[0].name = "Website v2";
+    firstEdit.projects[0].updatedAt = "2026-08-10T01:00:00.000Z";
+    repository.replaceState(firstEdit);
+    const first = repository
+      .getQueuedOperations(500)
+      .find(
+        (item) =>
+          item.entityType === "project" && item.entityId === "project-1",
+      );
+    assert.ok(first);
+    assert.equal(repository.setOperationExpectedRevision(first.id, 0), true);
+
+    const firstPush = deferred();
+    let pullCalls = 0;
+    let pushCalls = 0;
+    const service = new SyncService({
+      repository,
+      authService: {
+        isConfigured: () => true,
+        getAccessToken: async () => "token",
+        client: {
+          rpc: (name, params) => {
+            if (name === "workly_pull_changes") {
+              pullCalls += 1;
+              return Promise.resolve({
+                data:
+                  pullCalls === 1
+                    ? []
+                    : pullCalls === 2
+                      ? [
+                          {
+                            cursor: 1,
+                            entityType: "project",
+                            entityId: "project-1",
+                            operation: "upsert",
+                            payload: {
+                              ...firstEdit.projects[0],
+                              remoteRevision: 1,
+                            },
+                          },
+                        ]
+                      : [],
+                error: null,
+              });
+            }
+            pushCalls += 1;
+            if (pushCalls === 1) return firstPush.promise;
+            assert.equal(params.p_expected_revision, 1);
+            assert.equal(params.p_payload.name, "Website v3");
+            return Promise.resolve({
+              data: { conflict: false, remoteRevision: 2 },
+              error: null,
+            });
+          },
+        },
+      },
+    });
+
+    const firstSync = service.syncNow("auth-user-1");
+    await waitForRpcSetup();
+    assert.equal(pushCalls, 1);
+    const secondEdit = structuredClone(firstEdit);
+    secondEdit.projects[0].name = "Website v3";
+    secondEdit.projects[0].updatedAt = "2026-08-10T02:00:00.000Z";
+    repository.replaceState(secondEdit);
+    firstPush.resolve({
+      data: { conflict: false, remoteRevision: 1 },
+      error: null,
+    });
+
+    assert.deepEqual(await firstSync, {
+      state: "complete",
+      processed: 1,
+      failed: 0,
+    });
+    await waitForRpcSetup();
+    const successor = repository
+      .getQueuedOperations(500)
+      .find(
+        (item) =>
+          item.entityType === "project" && item.entityId === "project-1",
+      );
+    assert.ok(successor);
+    assert.notEqual(successor.id, first.id);
+    assert.equal(successor.expectedRevision, 1);
+
+    let secondSync;
+    do {
+      await waitForRpcSetup();
+      secondSync = service.syncNow("auth-user-1");
+    } while (secondSync === firstSync);
+    assert.deepEqual(await secondSync, {
+      state: "complete",
+      processed: 1,
+      failed: 0,
+    });
+    assert.equal(repository.getSyncConflicts().length, 0);
+    assert.equal(repository.loadState().projects[0].name, "Website v3");
+    assert.equal(
+      repository.getEntityRevision("user-1", "project", "project-1"),
+      2,
+    );
+  } finally {
+    repository.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("rejects a stale CAS write and leaves it retryable for the next pull", async () => {

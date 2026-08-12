@@ -123,7 +123,7 @@ test("rejects a database created by a newer application version", () => {
   const databasePath = path.join(directory, "workly.db");
   const database = new DatabaseSync(databasePath);
   database.exec(
-    "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES (1, datetime('now')), (2, datetime('now')), (3, datetime('now')), (4, datetime('now')), (5, datetime('now'));",
+    "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES (1, datetime('now')), (2, datetime('now')), (3, datetime('now')), (4, datetime('now')), (5, datetime('now')), (6, datetime('now'));",
   );
   database.close();
   try {
@@ -200,6 +200,97 @@ test("rolls back a failed ordered migration without advancing its ledger", () =>
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("migrates a revision-aware v4 outbox without changing its durable rows", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "workly-v4-outbox-"));
+  const databasePath = path.join(directory, "workly.db");
+  let database = new DatabaseSync(databasePath);
+  database.exec(
+    [
+      "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);",
+      "INSERT INTO schema_migrations VALUES (1, datetime('now')), (2, datetime('now')), (3, datetime('now')), (4, datetime('now'));",
+      "CREATE TABLE sync_outbox (id TEXT PRIMARY KEY, account_id TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, operation TEXT NOT NULL, idempotency_key TEXT NOT NULL UNIQUE, payload_json TEXT NOT NULL, created_at TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, next_attempt_at TEXT, status TEXT NOT NULL DEFAULT 'queued', expected_revision INTEGER CHECK (expected_revision IS NULL OR expected_revision >= 0), CHECK (operation IN ('upsert', 'delete')), CHECK (status IN ('queued', 'error', 'synced')), CHECK (attempts >= 0));",
+      "CREATE INDEX idx_outbox_status ON sync_outbox(status, created_at);",
+      "CREATE INDEX idx_outbox_entity_pending ON sync_outbox(account_id, entity_type, entity_id, status);",
+      "INSERT INTO sync_outbox (id, account_id, entity_type, entity_id, operation, idempotency_key, payload_json, created_at, attempts, last_error, next_attempt_at, status, expected_revision) VALUES ('op-1', 'account-1', 'project', 'project-1', 'upsert', 'key-1', '{\"id\":\"project-1\"}', '2026-08-10T00:00:00.000Z', 2, 'offline', '2026-08-10T01:00:00.000Z', 'error', 7);",
+    ].join("\n"),
+  );
+  database.close();
+
+  try {
+    const repository = new LocalStateRepository(databasePath);
+    repository.close();
+    database = new DatabaseSync(databasePath, { readOnly: true });
+    assert.deepEqual(
+      database
+        .prepare(
+          "SELECT id, idempotency_key, status, attempts, expected_revision FROM sync_outbox",
+        )
+        .all()
+        .map((row) => ({ ...row })),
+      [
+        {
+          id: "op-1",
+          idempotency_key: "key-1",
+          status: "error",
+          attempts: 2,
+          expected_revision: 7,
+        },
+      ],
+    );
+    assert.deepEqual(
+      database
+        .prepare("SELECT version FROM schema_migrations ORDER BY version")
+        .all()
+        .map((row) => row.version),
+      [1, 2, 3, 4, 5],
+    );
+    database.close();
+  } finally {
+    if (database?.isOpen) database.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("exports a standalone consistent recovery snapshot while the repository is open", () =>
+  withRepository((repository, databasePath) => {
+    repository.replaceState(fixture());
+    const snapshotPath = path.join(
+      path.dirname(databasePath),
+      "recovery",
+      "workly.db",
+    );
+    fs.mkdirSync(path.dirname(snapshotPath));
+    assert.ok(fs.statSync(`${databasePath}-wal`).size > 0);
+
+    repository.createRecoverySnapshot(snapshotPath);
+
+    assert.equal(fs.existsSync(`${snapshotPath}-wal`), false);
+    assert.equal(fs.existsSync(`${snapshotPath}-shm`), false);
+    const snapshot = new DatabaseSync(snapshotPath, { readOnly: true });
+    try {
+      assert.equal(
+        snapshot.prepare("PRAGMA quick_check").get().quick_check,
+        "ok",
+      );
+      assert.deepEqual(
+        snapshot
+          .prepare("SELECT id, display_name FROM accounts")
+          .all()
+          .map((row) => ({ ...row })),
+        [{ id: "user-1", display_name: "Minh" }],
+      );
+      assert.deepEqual(
+        snapshot
+          .prepare("SELECT id, name FROM projects")
+          .all()
+          .map((row) => ({ ...row })),
+        [{ id: "project-1", name: "Website" }],
+      );
+    } finally {
+      snapshot.close();
+    }
+  }));
 
 function markAllOperationsSynced(repository) {
   for (const operation of repository.getQueuedOperations(500))
@@ -350,6 +441,19 @@ test("atomically rebuilds a settled linked cache from a fetched cloud snapshot",
       failed: 0,
       conflicts: 0,
     });
+  }));
+
+test("requires an existing linked cache before a rebuild can import cloud data", () =>
+  withRepository((repository) => {
+    expectIntegrity(
+      () =>
+        repository.rebuildRemoteSnapshot(
+          "auth-user-1",
+          remoteBootstrapSnapshot(),
+        ),
+      "CACHE_REBUILD_REQUIRES_LOCAL_ACCOUNT",
+    );
+    assert.equal(repository.loadState().account, null);
   }));
 
 test("refuses cache rebuild while local work is active or unsynced", () =>
@@ -847,6 +951,259 @@ test("coalesces unsynced operations by entity while retaining the newest payload
         .get().total,
       1,
     );
+  }));
+
+test("keeps an in-flight operation durable and advances its successor after acknowledgement", () =>
+  withRepository((repository) => {
+    const state = fixture();
+    repository.replaceState(state);
+    markAllOperationsSynced(repository);
+
+    const firstEdit = clone(state);
+    firstEdit.projects[0].name = "Website v2";
+    firstEdit.projects[0].updatedAt = ONE_HOUR_LATER;
+    repository.replaceState(firstEdit);
+    const first = operationFor(repository, "project", "project-1");
+    assert.equal(repository.setOperationExpectedRevision(first.id, 0), true);
+    assert.equal(repository.claimOperation(first.id), true);
+
+    const secondEdit = clone(firstEdit);
+    secondEdit.projects[0].name = "Website v3";
+    secondEdit.projects[0].updatedAt = TWO_HOURS_LATER;
+    repository.replaceState(secondEdit);
+
+    const rowsBeforeAck = repository.db
+      .prepare(
+        [
+          "SELECT id, status, expected_revision FROM sync_outbox",
+          "WHERE entity_type = 'project' AND entity_id = 'project-1'",
+          "AND status <> 'synced'",
+          "ORDER BY rowid",
+        ].join(" "),
+      )
+      .all();
+    assert.deepEqual(
+      rowsBeforeAck.map((row) => ({ ...row })),
+      [
+        { id: first.id, status: "in_flight", expected_revision: 0 },
+        {
+          id: rowsBeforeAck[1].id,
+          status: "queued",
+          expected_revision: 0,
+        },
+      ],
+    );
+    assert.equal(
+      repository
+        .getQueuedOperations(500)
+        .filter(
+          (operation) =>
+            operation.entityType === "project" &&
+            operation.entityId === "project-1",
+        ).length,
+      0,
+    );
+    assert.equal(repository.markOperationSynced(first.id, 1), true);
+
+    const successor = operationFor(repository, "project", "project-1");
+    assert.equal(successor.id, rowsBeforeAck[1].id);
+    assert.equal(successor.expectedRevision, 1);
+    assert.equal(
+      repository.getEntityRevision("user-1", "project", "project-1"),
+      1,
+    );
+    assert.equal(repository.loadState().projects[0].syncStatus, "queued");
+  }));
+
+test("does not suppress a newer remote revision merely because the local revision ledger is ahead", () =>
+  withRepository((repository) => {
+    const state = fixture();
+    repository.replaceState(state);
+    markAllOperationsSynced(repository);
+    repository.setEntityRevision("user-1", "project", "project-1", 5);
+
+    assert.deepEqual(
+      repository.applyRemoteChanges([
+        {
+          cursor: 61,
+          entityType: "project",
+          entityId: "project-1",
+          operation: "upsert",
+          payload: remoteProject({
+            name: "Remote revision six",
+            updatedAt: TWO_HOURS_LATER,
+            remoteRevision: 6,
+          }),
+        },
+        {
+          cursor: 62,
+          entityType: "project",
+          entityId: "project-1",
+          operation: "upsert",
+          payload: remoteProject({
+            name: "Same remote revision, later cursor",
+            updatedAt: THREE_HOURS_LATER,
+            remoteRevision: 6,
+          }),
+        },
+      ]),
+      { cursor: 62, applied: 1, conflicts: 0 },
+    );
+    assert.equal(
+      repository.loadState().projects[0].name,
+      "Remote revision six",
+    );
+  }));
+
+test("retries an interrupted in-flight predecessor before its local successor", () =>
+  withRepository((repository, databasePath) => {
+    const state = fixture();
+    repository.replaceState(state);
+    markAllOperationsSynced(repository);
+
+    const firstEdit = clone(state);
+    firstEdit.projects[0].name = "Website v2";
+    firstEdit.projects[0].updatedAt = ONE_HOUR_LATER;
+    repository.replaceState(firstEdit);
+    const first = operationFor(repository, "project", "project-1");
+    assert.equal(repository.setOperationExpectedRevision(first.id, 0), true);
+    assert.equal(repository.claimOperation(first.id), true);
+
+    const secondEdit = clone(firstEdit);
+    secondEdit.projects[0].name = "Website v3";
+    secondEdit.projects[0].updatedAt = TWO_HOURS_LATER;
+    repository.replaceState(secondEdit);
+
+    repository.close();
+    const reopened = new LocalStateRepository(databasePath);
+    try {
+      const projectQueue = reopened
+        .getInFlightOperations(500)
+        .filter(
+          (operation) =>
+            operation.entityType === "project" &&
+            operation.entityId === "project-1",
+        );
+      assert.equal(projectQueue.length, 1);
+      const [retry] = projectQueue;
+      assert.equal(retry.id, first.id);
+      assert.equal(retry.idempotencyKey, first.idempotencyKey);
+      assert.equal(retry.expectedRevision, 0);
+      assert.equal(retry.status, "in_flight");
+      assert.equal(reopened.markOperationSynced(retry.id, 1), true);
+      const successor = operationFor(reopened, "project", "project-1");
+      assert.equal(successor.payload.name, "Website v3");
+      assert.equal(successor.expectedRevision, 1);
+    } finally {
+      reopened.close();
+    }
+  }));
+
+test("a failed in-flight predecessor backs off and keeps its queued successor blocked", () =>
+  withRepository((repository) => {
+    const state = fixture();
+    repository.replaceState(state);
+    markAllOperationsSynced(repository);
+
+    const firstEdit = clone(state);
+    firstEdit.projects[0].name = "Website v2";
+    firstEdit.projects[0].updatedAt = ONE_HOUR_LATER;
+    repository.replaceState(firstEdit);
+    const first = operationFor(repository, "project", "project-1");
+    assert.equal(repository.setOperationExpectedRevision(first.id, 0), true);
+    assert.equal(repository.claimOperation(first.id), true);
+
+    const secondEdit = clone(firstEdit);
+    secondEdit.projects[0].name = "Website v3";
+    secondEdit.projects[0].updatedAt = TWO_HOURS_LATER;
+    repository.replaceState(secondEdit);
+    assert.equal(
+      repository.markOperationFailed(first.id, "Network interrupted"),
+      true,
+    );
+
+    const predecessor = repository.db
+      .prepare(
+        "SELECT status, attempts, next_attempt_at FROM sync_outbox WHERE id = ?",
+      )
+      .get(first.id);
+    assert.equal(predecessor.status, "in_flight");
+    assert.equal(predecessor.attempts, 1);
+    assert.ok(Date.parse(predecessor.next_attempt_at) > Date.now());
+    assert.equal(repository.getSyncSummary().queued, 2);
+    assert.equal(repository.getSyncSummary().failed, 0);
+    assert.equal(
+      repository
+        .getQueuedOperations(500)
+        .some(
+          (operation) =>
+            operation.entityType === "project" &&
+            operation.entityId === "project-1",
+        ),
+      false,
+    );
+
+    repository.db
+      .prepare(
+        "UPDATE sync_outbox SET next_attempt_at = '2000-01-01T00:00:00.000Z' WHERE id = ?",
+      )
+      .run(first.id);
+    const [retry] = repository.getInFlightOperations(500);
+    assert.ok(retry);
+    assert.equal(retry.id, first.id);
+    assert.equal(retry.idempotencyKey, first.idempotencyKey);
+  }));
+
+test("drops a definitively rejected predecessor when its queued successor is newer", () =>
+  withRepository((repository) => {
+    const state = fixture();
+    repository.replaceState(state);
+    markAllOperationsSynced(repository);
+
+    const firstEdit = clone(state);
+    firstEdit.projects[0].name = "Website v2";
+    firstEdit.projects[0].updatedAt = ONE_HOUR_LATER;
+    repository.replaceState(firstEdit);
+    const first = operationFor(repository, "project", "project-1");
+    assert.equal(repository.claimOperation(first.id), true);
+
+    const secondEdit = clone(firstEdit);
+    secondEdit.projects[0].name = "Website v3";
+    secondEdit.projects[0].updatedAt = TWO_HOURS_LATER;
+    repository.replaceState(secondEdit);
+    const successor = repository.db
+      .prepare(
+        [
+          "SELECT id FROM sync_outbox",
+          "WHERE entity_type = 'project' AND entity_id = 'project-1'",
+          "AND status = 'queued' ORDER BY rowid DESC LIMIT 1",
+        ].join(" "),
+      )
+      .get();
+    assert.ok(successor);
+    assert.notEqual(successor.id, first.id);
+
+    assert.equal(
+      repository.markOperationFailed(first.id, "Rejected by server", {
+        uncertain: false,
+      }),
+      true,
+    );
+    assert.equal(
+      repository.db
+        .prepare("SELECT COUNT(*) AS total FROM sync_outbox WHERE id = ?")
+        .get(first.id).total,
+      0,
+    );
+    assert.equal(
+      operationFor(repository, "project", "project-1").id,
+      successor.id,
+    );
+    assert.deepEqual(repository.getSyncSummary(), {
+      queued: 1,
+      failed: 0,
+      conflicts: 0,
+    });
   }));
 
 test("orders account setup before preferences even when claiming requeues the account later", () =>

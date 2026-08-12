@@ -68,6 +68,11 @@ function RecoveryHarness({
   ) : null;
 }
 
+function CustomizeWithHiddenTimerHarness() {
+  const { state } = useAppStore();
+  return state ? <DashboardCustomizeDialog onClose={() => {}} /> : null;
+}
+
 const recoverySession: WorkSession = {
   id: "session-1",
   startedAt: "2026-08-10T08:00:00.000Z",
@@ -140,6 +145,26 @@ describe("Modal accessibility", () => {
 });
 
 describe("mutation feedback and serialization", () => {
+  it("keeps the work timer fixed even when legacy preferences hide it", async () => {
+    const state = readyState();
+    state.preferences.dashboardHiddenWidgets = ["timer", "goals"];
+    window.worklyDesktop = {
+      loadState: vi.fn().mockResolvedValue(state),
+      onStateChanged: vi.fn(() => () => {}),
+    } as unknown as NonNullable<Window["worklyDesktop"]>;
+
+    render(
+      <AppStoreProvider>
+        <CustomizeWithHiddenTimerHarness />
+      </AppStoreProvider>,
+    );
+
+    const timer = await screen.findByRole("checkbox", { name: "Work timer" });
+    expect(timer).toBeChecked();
+    expect(timer).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "Goals" })).not.toBeChecked();
+  });
+
   it("serializes dashboard preference writes and exposes a failed ActionResult", async () => {
     const state = readyState();
     const command = deferred<never>();
@@ -253,7 +278,56 @@ describe("mutation feedback and serialization", () => {
 });
 
 describe("signed-out local-data recovery", () => {
-  it("lets a signed-out user invoke the native reset for data left on the device", async () => {
+  it("updates document language and title with the onboarding language", async () => {
+    window.worklyDesktop = undefined;
+    render(
+      <AuthProvider>
+        <AppStoreProvider>
+          <App />
+        </AppStoreProvider>
+      </AuthProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Tiếng Việt" }));
+    await waitFor(() =>
+      expect(document.documentElement).toHaveAttribute("lang", "vi"),
+    );
+    expect(document.title).toBe(
+      "TimeFarm — Tập trung làm việc, rõ ràng thu nhập",
+    );
+  });
+
+  it("blocks local workspace entry when desktop auth bootstrap fails", async () => {
+    const state = createEmptyState();
+    window.worklyDesktop = {
+      loadState: vi.fn().mockResolvedValue(state),
+      getAuthStatus: vi
+        .fn()
+        .mockRejectedValue(new Error("auth IPC unavailable")),
+      onAuthChanged: vi.fn(() => () => {}),
+      onStateChanged: vi.fn(() => () => {}),
+    } as unknown as NonNullable<Window["worklyDesktop"]>;
+
+    render(
+      <AuthProvider>
+        <AppStoreProvider>
+          <App />
+        </AppStoreProvider>
+      </AuthProvider>,
+    );
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Sign-in status is unavailable",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: "Enter workspace" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("requires typed confirmation before a signed-out user invokes native reset", async () => {
     const localState = createEmptyState();
     localState.account = {
       id: "local-account",
@@ -295,6 +369,12 @@ describe("signed-out local-data recovery", () => {
     expect(document.documentElement).toHaveAttribute("lang", "en");
     expect(document.title).toBe("TimeFarm — Focused work, clear earnings");
     fireEvent.click(clearButton);
+    expect(resetLocalData).not.toHaveBeenCalled();
+    const confirmation = await screen.findByRole("textbox", {
+      name: "Type WIPE to confirm.",
+    });
+    fireEvent.change(confirmation, { target: { value: "WIPE" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm wipe" }));
     await waitFor(() => expect(resetLocalData).toHaveBeenCalledOnce());
     await waitFor(() =>
       expect(
@@ -352,6 +432,12 @@ describe("signed-out local-data recovery", () => {
       screen.getByRole("button", { name: "Sign out to use another account" }),
     ).toBeEnabled();
     fireEvent.click(clearButton);
+    expect(resetLocalData).not.toHaveBeenCalled();
+    const confirmation = await screen.findByRole("textbox", {
+      name: "Type WIPE to confirm.",
+    });
+    fireEvent.change(confirmation, { target: { value: "WIPE" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm wipe" }));
     await waitFor(() => expect(resetLocalData).toHaveBeenCalledOnce());
   });
 });

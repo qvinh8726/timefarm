@@ -70,7 +70,7 @@ async function run() {
       );
 
     console.log(
-      `Packaged application smoke passed: ${path.basename(executable)} loaded its React renderer, lazy pages, and workspace dialog, then exited cleanly.`,
+      `Packaged application smoke passed: ${path.basename(executable)} loaded its configured runtime entry flow, then exited cleanly.`,
     );
   } finally {
     if (child) stopProcessTree(child);

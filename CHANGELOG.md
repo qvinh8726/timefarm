@@ -3,7 +3,22 @@
 All notable changes are documented here. TimeFarm follows semantic versioning
 once a stable release line is declared; 0.x releases remain beta.
 
-## Unreleased
+## 0.2.3 - 2026-08-12
+
+### Production-readiness audit
+
+- Made runtime, hosted-contract, and packaging validation share one strict public Supabase configuration contract; privileged keys, malformed origins, and alternate OAuth callbacks now fail closed.
+- Restricted automated releases to unsigned `v0.*` prereleases and added tag/version, protected-environment, master-lineage, explicit `NotSigned`, exact-artifact, packaged SBOM/build-provenance attestations, and full-lockfile audit gates.
+- Prevented stale cloud configuration from leaking across offline/cloud package builds and verify the requested mode inside the final ASAR.
+- Export recovery databases as consistent SQLite snapshots behind the mutation queue and hash the exported bytes rather than changing live sources.
+- Made sync claims durable across crashes and ambiguous timeouts, preserve edits created during an in-flight push, retry with the original idempotency key, and keep cache rebuilds from discarding unsettled operations.
+- Cancel in-flight sync before sign-out, verify encrypted session/PKCE files were actually removed, and reject mixed environment/bundled cloud credential pairs.
+- Added guarded destructive confirmations, auth-bootstrap failure isolation, fixed-priority dashboard timer behavior, responsive auth layouts, localized modal labels, sync/FX failure feedback, and keyboard-safe mobile navigation.
+
+### Verification and distribution
+
+- Passed formatting, JavaScript and CSS linting, Electron/workflow checks, 75 renderer tests, 202 Electron tests, coverage gates, the production build, bundle budgets, full-lockfile dependency audit, explicit cloud/offline packaging, 9/9 Electron fuse checks, and packaged/installer smoke tests.
+- Prepared an unsigned offline `0.2.3` installer candidate while keeping the automated cloud release blocked on hosted Supabase/OAuth verification and production secrets.
 
 ## 0.2.2 - 2026-08-12
 
