@@ -7,6 +7,9 @@ const { createClient } = require("@supabase/supabase-js");
 // local-first timer path. Keep this comfortably below the timer-lease RPC
 // deadline (5 seconds) while allowing a normal online refresh to complete.
 const DEFAULT_HYDRATION_TIMEOUT_MS = 1_500;
+// Interactive authentication is expected to take longer than background
+// hydration, but it must still release the renderer when the network stalls.
+const DEFAULT_OPERATION_TIMEOUT_MS = 15_000;
 const OAUTH_PENDING_TTL_MS = 10 * 60_000;
 const OAUTH_PENDING_VERSION = 1;
 // Keep this storage namespace separate from the persisted Supabase session.
@@ -282,10 +285,10 @@ function offlineStatus(user) {
   };
 }
 
-function normaliseHydrationTimeoutMs(value) {
+function normaliseTimeoutMs(value, label) {
   if (!Number.isInteger(value) || value < 1)
     throw new TypeError(
-      "Auth hydration timeout must be a positive integer number of milliseconds.",
+      `Auth ${label} timeout must be a positive integer number of milliseconds.`,
     );
   return value;
 }
@@ -296,6 +299,7 @@ class SupabaseAuthService {
     safeStorage,
     environment = process.env,
     hydrationTimeoutMs = DEFAULT_HYDRATION_TIMEOUT_MS,
+    operationTimeoutMs = DEFAULT_OPERATION_TIMEOUT_MS,
     timeoutScheduler = { setTimeout, clearTimeout },
     now = () => Date.now(),
     randomBytes = secureRandomBytes,
@@ -317,7 +321,14 @@ class SupabaseAuthService {
     this.configuration = readConfiguration(environment);
     this.sessionPath = path.join(userDataPath, "auth-session.bin");
     this.pendingOAuthPath = path.join(userDataPath, "auth-oauth-pending.bin");
-    this.hydrationTimeoutMs = normaliseHydrationTimeoutMs(hydrationTimeoutMs);
+    this.hydrationTimeoutMs = normaliseTimeoutMs(
+      hydrationTimeoutMs,
+      "hydration",
+    );
+    this.operationTimeoutMs = normaliseTimeoutMs(
+      operationTimeoutMs,
+      "operation",
+    );
     this.timeoutScheduler = timeoutScheduler;
     this.now = now;
     this.randomBytes = randomBytes;
@@ -659,7 +670,13 @@ class SupabaseAuthService {
    * their encrypted session instead. Late responses are intentionally inert:
    * a future status check can refresh the session normally.
    */
-  waitForRemoteResponse(remoteResponse, operation) {
+  /**
+   * @param {any} remoteResponse
+   * @param {string} operation
+   * @param {{timeoutMs?: number, onTimeout?: () => void}} [options]
+   */
+  waitForRemoteResponse(remoteResponse, operation, options = {}) {
+    const { timeoutMs = this.hydrationTimeoutMs, onTimeout } = options;
     return new Promise((resolve, reject) => {
       let settled = false;
       let timeoutHandle;
@@ -673,13 +690,14 @@ class SupabaseAuthService {
 
       try {
         timeoutHandle = this.timeoutScheduler.setTimeout(() => {
+          onTimeout?.();
           settle(
             reject,
             new Error(
-              `Supabase Auth ${operation} timed out after ${this.hydrationTimeoutMs}ms.`,
+              `Supabase Auth ${operation} timed out after ${timeoutMs}ms. Check your connection and try again.`,
             ),
           );
-        }, this.hydrationTimeoutMs);
+        }, timeoutMs);
         timeoutHandle?.unref?.();
         Promise.resolve(remoteResponse).then(
           (response) => settle(resolve, response),
@@ -695,11 +713,20 @@ class SupabaseAuthService {
     this.assertConfigured();
     this.assertCredentials(email, password);
     const generation = ++this.authGeneration;
-    const { data, error } = await this.client.auth.signUp({
-      email: email.trim(),
-      password,
-      options: { data: { display_name: displayName?.trim() || undefined } },
-    });
+    const { data, error } = await this.waitForRemoteResponse(
+      this.client.auth.signUp({
+        email: email.trim(),
+        password,
+        options: { data: { display_name: displayName?.trim() || undefined } },
+      }),
+      "sign up",
+      {
+        timeoutMs: this.operationTimeoutMs,
+        onTimeout: () => {
+          if (generation === this.authGeneration) ++this.authGeneration;
+        },
+      },
+    );
     if (generation !== this.authGeneration)
       throw new Error(
         "This authentication attempt was superseded by a newer action.",
@@ -716,10 +743,19 @@ class SupabaseAuthService {
     this.assertConfigured();
     this.assertCredentials(email, password);
     const generation = ++this.authGeneration;
-    const { data, error } = await this.client.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
+    const { data, error } = await this.waitForRemoteResponse(
+      this.client.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      }),
+      "sign in",
+      {
+        timeoutMs: this.operationTimeoutMs,
+        onTimeout: () => {
+          if (generation === this.authGeneration) ++this.authGeneration;
+        },
+      },
+    );
     if (generation !== this.authGeneration)
       throw new Error(
         "This authentication attempt was superseded by a newer action.",
@@ -738,7 +774,7 @@ class SupabaseAuthService {
       );
     // TimeFarm permits one desktop OAuth flow at a time. Dropping a stale flow
     // also prevents its verifier from being selected for a newer callback.
-    ++this.authGeneration;
+    const generation = ++this.authGeneration;
     this.clearPendingOAuth();
     try {
       const state = this.createOAuthState();
@@ -746,10 +782,23 @@ class SupabaseAuthService {
         this.configuration.redirectUrl,
         state,
       );
-      const { data, error } = await this.client.auth.signInWithOAuth({
-        provider: "google",
-        options: { redirectTo, skipBrowserRedirect: true },
-      });
+      const { data, error } = await this.waitForRemoteResponse(
+        this.client.auth.signInWithOAuth({
+          provider: "google",
+          options: { redirectTo, skipBrowserRedirect: true },
+        }),
+        "Google sign-in start",
+        {
+          timeoutMs: this.operationTimeoutMs,
+          onTimeout: () => {
+            if (generation === this.authGeneration) ++this.authGeneration;
+          },
+        },
+      );
+      if (generation !== this.authGeneration)
+        throw new Error(
+          "This authentication attempt was superseded by a newer action.",
+        );
       if (error || !data?.url)
         throw new Error(error?.message || "Unable to start Google sign-in.");
       // Supabase's authorization URL intentionally does not expose its own
@@ -760,7 +809,20 @@ class SupabaseAuthService {
           "Google sign-in response did not include a verifiable PKCE flow.",
         );
       this.persistPendingOAuth(state, data.flowId);
-      await openExternal(data.url);
+      await this.waitForRemoteResponse(
+        Promise.resolve().then(() => openExternal(data.url)),
+        "browser launch",
+        {
+          timeoutMs: this.operationTimeoutMs,
+          onTimeout: () => {
+            if (generation === this.authGeneration) ++this.authGeneration;
+          },
+        },
+      );
+      if (generation !== this.authGeneration)
+        throw new Error(
+          "This authentication attempt was superseded by a newer action.",
+        );
       return { pending: true };
     } catch (error) {
       this.clearPendingOAuth();
@@ -808,9 +870,17 @@ class SupabaseAuthService {
       throw new Error("Google sign-in callback could not be verified.");
     const generation = this.authGeneration;
     try {
-      const { data, error } = await this.client.auth.exchangeCodeForSession(
-        codes[0],
-        { flowId: consumed.flowId },
+      const { data, error } = await this.waitForRemoteResponse(
+        this.client.auth.exchangeCodeForSession(codes[0], {
+          flowId: consumed.flowId,
+        }),
+        "Google sign-in exchange",
+        {
+          timeoutMs: this.operationTimeoutMs,
+          onTimeout: () => {
+            if (generation === this.authGeneration) ++this.authGeneration;
+          },
+        },
       );
       if (generation !== this.authGeneration)
         throw new Error(

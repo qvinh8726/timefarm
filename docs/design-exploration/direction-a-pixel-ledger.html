@@ -1,0 +1,1978 @@
+<!--
+  ASSUMPTIONS: Populated English/US-dollar sample workspace, active local session, 1440x900 native Windows desktop viewport.
+  FORM MOTIF: A 60-notch seconds wheel locked into crisp ledger rules, stepped pixel corners, and tabular instrument typography.
+  DATA DISCLAIMER: Every project, duration, goal, session, and financial value below is illustrative design sample data, not user data.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TimeFarm — Pixel Ledger direction</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #091a38;
+        --navy: #06224a;
+        --navy-2: #0b326a;
+        --blue: #145aa3;
+        --blue-soft: #e9f1fa;
+        --teal: #0f9889;
+        --lime: #d5ff7d;
+        --paper: #f8fafc;
+        --paper-2: #eef3f7;
+        --line: #91a5ba;
+        --line-strong: #235991;
+        --muted: #587088;
+        --rose: #b73a55;
+        --shadow: 0 12px 28px rgba(5, 27, 59, 0.12);
+        --sans: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+        --mono: "Cascadia Mono", Consolas, monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        min-width: 1080px;
+        height: 100%;
+        min-height: 700px;
+        margin: 0;
+        overflow: hidden;
+        color: var(--ink);
+        background: #dfe7ef;
+        font-family: var(--sans);
+        font-size: 14px;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      button,
+      input,
+      textarea,
+      select {
+        font: inherit;
+      }
+
+      button {
+        color: inherit;
+      }
+
+      button:focus-visible,
+      input:focus-visible,
+      textarea:focus-visible,
+      select:focus-visible,
+      a:focus-visible {
+        outline: 3px solid rgba(15, 152, 137, 0.34);
+        outline-offset: 2px;
+      }
+
+      .skip-link {
+        position: fixed;
+        z-index: 100;
+        top: 8px;
+        left: 12px;
+        padding: 8px 12px;
+        transform: translateY(-160%);
+        border: 1px solid var(--ink);
+        background: white;
+        color: var(--ink);
+        font-weight: 700;
+      }
+
+      .skip-link:focus {
+        transform: translateY(0);
+      }
+
+      .icon {
+        width: 18px;
+        height: 18px;
+        flex: 0 0 auto;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.8;
+        stroke-linecap: square;
+        stroke-linejoin: miter;
+      }
+
+      .titlebar {
+        height: 34px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid #aebdca;
+        background: #f5f7fa;
+        user-select: none;
+      }
+
+      .titlebar-brand {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding-left: 13px;
+        color: #1b2c44;
+        font-size: 13px;
+        font-weight: 650;
+        letter-spacing: 0.01em;
+      }
+
+      .app-glyph {
+        width: 17px;
+        height: 17px;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1px;
+        padding: 2px;
+        border: 1px solid #24486d;
+      }
+
+      .app-glyph i {
+        background: #24486d;
+      }
+      .app-glyph i:nth-child(2),
+      .app-glyph i:nth-child(4),
+      .app-glyph i:nth-child(9) {
+        background: transparent;
+      }
+
+      .window-controls {
+        display: flex;
+        align-self: stretch;
+      }
+
+      .window-control {
+        width: 46px;
+        border: 0;
+        border-left: 1px solid transparent;
+        background: transparent;
+        font-family: var(--mono);
+        font-size: 18px;
+        line-height: 1;
+      }
+
+      .window-control:hover {
+        background: #e5ebf0;
+      }
+      .window-control.close:hover {
+        color: white;
+        background: #bd3550;
+      }
+
+      .app {
+        height: calc(100vh - 62px);
+        display: grid;
+        grid-template-columns: 228px minmax(0, 1fr);
+        background: var(--paper);
+      }
+
+      .sidebar {
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        color: #f4f8fc;
+        border-right: 1px solid #102f55;
+        background:
+          linear-gradient(rgba(255, 255, 255, 0.026) 1px, transparent 1px) 0 0 /
+            100% 22px,
+          linear-gradient(180deg, #071e3d 0%, #061a36 100%);
+      }
+
+      .brand-block {
+        min-height: 94px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 18px 18px 15px;
+        border-bottom: 1px solid rgba(155, 190, 222, 0.23);
+      }
+
+      .brand-mark {
+        width: 33px;
+        height: 33px;
+        display: grid;
+        place-items: center;
+        position: relative;
+        border: 1px solid #65b8c9;
+        background: #0e315e;
+        box-shadow: inset 0 0 0 3px #071e3d;
+      }
+
+      .brand-mark::before,
+      .brand-mark::after {
+        content: "";
+        position: absolute;
+        background: #8eced1;
+      }
+
+      .brand-mark::before {
+        width: 17px;
+        height: 5px;
+      }
+      .brand-mark::after {
+        width: 5px;
+        height: 17px;
+      }
+
+      .brand-copy strong {
+        display: block;
+        font-family: var(--mono);
+        font-size: 20px;
+        letter-spacing: 0.025em;
+      }
+
+      .brand-copy span {
+        display: block;
+        margin-top: 3px;
+        color: #78a6cf;
+        font-family: var(--mono);
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .navigation {
+        padding: 12px 8px;
+      }
+
+      .nav-item {
+        height: 47px;
+        display: flex;
+        align-items: center;
+        gap: 13px;
+        position: relative;
+        margin-bottom: 3px;
+        padding: 0 14px;
+        color: #c6d5e5;
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: 550;
+      }
+
+      .nav-item:hover {
+        color: white;
+        background: rgba(68, 121, 173, 0.18);
+      }
+
+      .nav-item[aria-current="page"] {
+        color: white;
+        border: 1px solid #1a5d9f;
+        background: #104782;
+        box-shadow: inset 3px 0 0 #58cad1;
+      }
+
+      .nav-item[aria-current="page"]::after {
+        content: "";
+        position: absolute;
+        right: 10px;
+        width: 6px;
+        height: 6px;
+        transform: rotate(45deg);
+        background: #d5ff7d;
+      }
+
+      .nav-divider {
+        height: 1px;
+        margin: 13px 7px;
+        background: repeating-linear-gradient(
+          90deg,
+          #53708e 0 3px,
+          transparent 3px 6px
+        );
+        opacity: 0.65;
+      }
+
+      .sidebar-spacer {
+        flex: 1;
+        min-height: 10px;
+      }
+
+      .workspace-stamp {
+        margin: 0 15px 16px;
+        padding: 12px 13px;
+        border: 1px solid rgba(134, 174, 212, 0.4);
+        background: rgba(5, 21, 44, 0.47);
+      }
+
+      .workspace-stamp .eyebrow {
+        color: #7ba2c7;
+      }
+
+      .workspace-stamp strong {
+        display: block;
+        overflow: hidden;
+        margin: 6px 0 4px;
+        color: white;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .workspace-stamp p {
+        margin: 0;
+        color: #9fb5cb;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .main {
+        min-width: 0;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        background:
+          linear-gradient(rgba(22, 74, 126, 0.025) 1px, transparent 1px) 0 0 /
+            100% 22px,
+          var(--paper);
+      }
+
+      .command-rail {
+        height: 58px;
+        flex: 0 0 58px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 17px 0 19px;
+        border-bottom: 1px solid #c6d1dc;
+        background: rgba(248, 250, 252, 0.94);
+      }
+
+      .page-context {
+        display: flex;
+        align-items: baseline;
+        gap: 14px;
+        min-width: 0;
+      }
+
+      .page-context h1 {
+        margin: 0;
+        font-family: var(--mono);
+        font-size: 21px;
+        font-weight: 650;
+        letter-spacing: 0.02em;
+      }
+
+      .page-context p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .rail-status {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        color: #475f77;
+        font-family: var(--mono);
+        font-size: 11px;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+      }
+
+      .status-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+      }
+
+      .status-chip::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        background: var(--teal);
+        box-shadow: 0 0 0 2px rgba(15, 152, 137, 0.15);
+      }
+
+      .sample-label {
+        padding: 5px 8px;
+        border: 1px solid #a4b4c4;
+        background: #f4f7fa;
+        color: #51677e;
+        font-family: var(--sans);
+        font-size: 11px;
+        font-weight: 650;
+        letter-spacing: 0.02em;
+        text-transform: none;
+      }
+
+      .dashboard-grid {
+        height: calc(100% - 58px);
+        min-height: 0;
+        display: grid;
+        grid-template-columns:
+          minmax(330px, 1.08fr) minmax(360px, 1.12fr)
+          minmax(300px, 0.92fr);
+        grid-template-rows: minmax(244px, 1fr) 126px 314px;
+        gap: 12px;
+        padding: 12px 14px;
+      }
+
+      .panel {
+        min-width: 0;
+        min-height: 0;
+        position: relative;
+        overflow: hidden;
+        border: 1px solid var(--line-strong);
+        background: rgba(255, 255, 255, 0.92);
+      }
+
+      .panel::after {
+        content: "";
+        position: absolute;
+        right: -1px;
+        bottom: -1px;
+        width: 10px;
+        height: 10px;
+        border-top: 1px solid var(--line-strong);
+        border-left: 1px solid var(--line-strong);
+        background: var(--paper);
+      }
+
+      .panel-header {
+        min-height: 39px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 0 13px;
+        border-bottom: 1px solid #b6c6d6;
+        background: linear-gradient(180deg, #fbfcfd, #f3f6f9);
+      }
+
+      .panel-title {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        min-width: 0;
+        margin: 0;
+        font-family: var(--mono);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+
+      .panel-title::after {
+        content: "";
+        width: 70px;
+        height: 3px;
+        flex: 1;
+        opacity: 0.75;
+        background: repeating-linear-gradient(
+          90deg,
+          var(--blue) 0 4px,
+          transparent 4px 6px
+        );
+      }
+
+      .panel-meta {
+        color: var(--muted);
+        font-size: 11px;
+        white-space: nowrap;
+      }
+
+      .eyebrow {
+        font-family: var(--mono);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .timer-panel {
+        grid-column: 1;
+        grid-row: 1 / span 2;
+        display: flex;
+        flex-direction: column;
+        background:
+          linear-gradient(135deg, rgba(18, 82, 145, 0.035) 25%, transparent 25%)
+            0 0 / 8px 8px,
+          white;
+      }
+
+      .timer-panel::before {
+        content: "";
+        position: absolute;
+        z-index: 2;
+        top: -1px;
+        right: -1px;
+        width: 24px;
+        height: 24px;
+        clip-path: polygon(
+          0 0,
+          100% 0,
+          100% 100%,
+          75% 100%,
+          75% 75%,
+          50% 75%,
+          50% 50%,
+          25% 50%,
+          25% 25%,
+          0 25%
+        );
+        background: var(--blue);
+      }
+
+      .timer-project {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px 16px 5px;
+      }
+
+      .timer-project h2 {
+        margin: 4px 0 5px;
+        font-size: 20px;
+        line-height: 1.2;
+        letter-spacing: -0.015em;
+      }
+
+      .project-kind {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .project-dot {
+        width: 7px;
+        height: 7px;
+        background: #6ea7ce;
+      }
+
+      .running-flag {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 7px;
+        border: 1px solid #77aaa4;
+        background: #eef9f7;
+        color: #08776c;
+        font-family: var(--mono);
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .running-flag::before {
+        content: "";
+        width: 6px;
+        height: 6px;
+        background: var(--teal);
+      }
+
+      .chronometer {
+        height: 218px;
+        position: relative;
+        display: grid;
+        place-items: center;
+        margin: 0 16px;
+        overflow: hidden;
+        border-top: 1px solid #b7c8d8;
+        border-bottom: 1px solid #b7c8d8;
+        background:
+          linear-gradient(
+            90deg,
+            transparent 49.85%,
+            rgba(14, 70, 126, 0.13) 50%,
+            transparent 50.15%
+          ),
+          linear-gradient(#fbfcfd, #f5f8fb);
+      }
+
+      .seconds-wheel {
+        width: 248px;
+        height: 248px;
+        position: absolute;
+        top: -23px;
+        left: 50%;
+        transform: translateX(-50%);
+        border-radius: 50%;
+        opacity: 0.5;
+        background: repeating-conic-gradient(
+          from -3deg,
+          var(--blue) 0 1.35deg,
+          transparent 1.35deg 6deg
+        );
+        -webkit-mask: radial-gradient(
+          circle,
+          transparent 0 103px,
+          #000 104px 112px,
+          transparent 113px
+        );
+        mask: radial-gradient(
+          circle,
+          transparent 0 103px,
+          #000 104px 112px,
+          transparent 113px
+        );
+      }
+
+      .wheel-orbit {
+        width: 248px;
+        height: 248px;
+        position: absolute;
+        top: -23px;
+        left: 50%;
+        transform: translateX(-50%);
+        border: 1px solid rgba(18, 82, 145, 0.22);
+        border-radius: 50%;
+      }
+
+      .second-pointer {
+        width: 3px;
+        height: 124px;
+        position: absolute;
+        top: 101px;
+        left: calc(50% - 1px);
+        transform: rotate(252deg);
+        transform-origin: 50% 0;
+      }
+
+      .second-pointer::after {
+        content: "";
+        width: 9px;
+        height: 9px;
+        position: absolute;
+        bottom: 2px;
+        left: -3px;
+        border: 2px solid white;
+        background: var(--teal);
+        box-shadow: 0 0 0 1px var(--teal);
+      }
+
+      .time-readout {
+        z-index: 1;
+        margin-top: -2px;
+        font-family: var(--mono);
+        font-size: clamp(43px, 3.35vw, 54px);
+        font-weight: 650;
+        line-height: 1;
+        letter-spacing: -0.07em;
+        font-variant-numeric: tabular-nums;
+        text-shadow: 2px 2px 0 #dbe6f0;
+      }
+
+      .time-units {
+        z-index: 1;
+        position: absolute;
+        top: 134px;
+        left: 50%;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        width: min(280px, 84%);
+        transform: translateX(-50%);
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: 9px;
+        letter-spacing: 0.08em;
+        text-align: center;
+        text-transform: uppercase;
+      }
+
+      .wheel-label {
+        position: absolute;
+        color: #657d95;
+        font-family: var(--mono);
+        font-size: 9px;
+      }
+
+      .wheel-label.w0 {
+        top: 13px;
+        left: calc(50% - 6px);
+      }
+      .wheel-label.w15 {
+        top: 96px;
+        right: 17px;
+      }
+      .wheel-label.w30 {
+        bottom: 7px;
+        left: calc(50% - 6px);
+      }
+      .wheel-label.w45 {
+        top: 96px;
+        left: 17px;
+      }
+
+      .timer-actions {
+        display: grid;
+        grid-template-columns: 1.15fr 1fr;
+        gap: 9px;
+        padding: 13px 16px 0;
+      }
+
+      .button {
+        min-height: 43px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        border: 1px solid var(--navy-2);
+        border-radius: 4px;
+        background: white;
+        color: var(--navy);
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .button:hover {
+        background: #edf3f8;
+      }
+
+      .button.primary {
+        border-color: #0e4e8c;
+        background: #125b9f;
+        color: white;
+      }
+
+      .button.primary:hover {
+        background: #0d4d8b;
+      }
+
+      .button.start {
+        border-color: #89ad41;
+        background: var(--lime);
+        color: #17350f;
+      }
+
+      .button.danger {
+        color: #9e2843;
+        border-color: #bc6e81;
+      }
+
+      .timer-note {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 17px 0;
+        color: #315b86;
+        font-size: 12px;
+      }
+
+      .timer-note button {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: #225992;
+        font-weight: 650;
+      }
+
+      .timer-note span {
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: 10px;
+      }
+
+      .trend-panel {
+        grid-column: 2 / span 2;
+        grid-row: 1;
+      }
+
+      .currency-select {
+        height: 27px;
+        padding: 0 22px 0 8px;
+        border: 1px solid #9bafc2;
+        border-radius: 3px;
+        background: white;
+        color: #173a60;
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .trend-body {
+        height: calc(100% - 40px);
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 146px;
+        gap: 10px;
+        padding: 10px 12px 8px;
+      }
+
+      .chart-wrap {
+        min-width: 0;
+        min-height: 0;
+        position: relative;
+        border-left: 1px solid #9db0c2;
+        border-bottom: 1px solid #7d94aa;
+        background: repeating-linear-gradient(
+          180deg,
+          transparent 0 47px,
+          rgba(79, 107, 134, 0.15) 47px 48px
+        );
+      }
+
+      .chart-wrap svg {
+        width: 100%;
+        height: 100%;
+        overflow: visible;
+      }
+
+      .chart-summary {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 6px 4px 3px 9px;
+        border-left: 1px solid #b9c7d4;
+      }
+
+      .chart-summary strong {
+        display: block;
+        margin: 3px 0 2px;
+        font-family: var(--mono);
+        font-size: 22px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .chart-summary p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.45;
+      }
+
+      .delta {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 7px;
+        color: #087b6f;
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .delta::before {
+        content: "↗";
+        font-family: var(--mono);
+        font-size: 13px;
+      }
+
+      .chart-key {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: #5f758a;
+        font-size: 10px;
+      }
+
+      .chart-key::before {
+        content: "";
+        width: 9px;
+        height: 9px;
+        border: 1px solid #15599b;
+        background: #15599b;
+      }
+
+      .today-panel {
+        grid-column: 2 / span 2;
+        grid-row: 2;
+      }
+
+      .pulse {
+        height: 100%;
+        display: grid;
+        grid-template-columns: 126px repeat(4, minmax(0, 1fr));
+      }
+
+      .pulse-heading {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding: 11px 13px;
+        border-right: 1px solid #aebdcb;
+        background: #f0f5f8;
+      }
+
+      .pulse-heading strong {
+        margin-top: 8px;
+        font-family: var(--mono);
+        font-size: 12px;
+        line-height: 1.3;
+      }
+
+      .metric {
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        position: relative;
+        padding: 11px 13px;
+        border-right: 1px dotted #8ea2b6;
+      }
+
+      .metric:last-child {
+        border-right: 0;
+      }
+
+      .metric-icon {
+        width: 29px;
+        height: 29px;
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+        color: #195d9d;
+        border: 1px solid #9cb3c8;
+        background: #f4f8fb;
+      }
+
+      .metric span {
+        display: block;
+        color: var(--muted);
+        font-size: 10px;
+        text-transform: uppercase;
+      }
+
+      .metric strong {
+        display: block;
+        overflow: hidden;
+        margin-top: 4px;
+        font-family: var(--mono);
+        font-size: clamp(15px, 1.35vw, 20px);
+        font-variant-numeric: tabular-nums;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .lower-left {
+        grid-column: 1;
+        grid-row: 3;
+        min-height: 0;
+        display: grid;
+        grid-template-rows: 145px minmax(0, 1fr);
+        gap: 12px;
+      }
+
+      .goal-panel {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .goal-body {
+        flex: 1;
+        padding: 10px 13px 9px;
+      }
+
+      .goal-top,
+      .goal-foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .goal-top strong {
+        font-size: 13px;
+      }
+
+      .goal-percent {
+        font-family: var(--mono);
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      .goal-track {
+        height: 18px;
+        display: grid;
+        grid-template-columns: repeat(20, 1fr);
+        gap: 3px;
+        margin: 10px 0 8px;
+      }
+
+      .goal-track i {
+        border: 1px solid #c4ced8;
+        background: #e5e9ed;
+      }
+      .goal-track i.done {
+        border-color: #148c80;
+        background: #20a99a;
+      }
+      .goal-track i.current {
+        border-color: #1b766d;
+        background: linear-gradient(90deg, #20a99a 40%, #e5e9ed 40%);
+      }
+
+      .goal-foot {
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: 10px;
+        text-transform: uppercase;
+      }
+
+      .goal-foot strong {
+        color: #183e65;
+        font-size: 11px;
+      }
+
+      .mini-panel {
+        display: grid;
+        grid-template-rows: 35px 1fr;
+      }
+
+      .mini-panel .panel-header {
+        min-height: 35px;
+      }
+
+      .mini-body {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        grid-template-rows: 1fr auto;
+        align-items: center;
+        gap: 5px 12px;
+        padding: 10px 12px;
+      }
+
+      .mini-project {
+        overflow: hidden;
+      }
+
+      .mini-project strong,
+      .mini-project span {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .mini-project strong {
+        font-size: 12px;
+      }
+      .mini-project span {
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .mini-time {
+        min-width: 110px;
+        padding: 7px 9px;
+        border: 1px solid #496a8b;
+        background: #f5f8fb;
+        font-family: var(--mono);
+        font-size: 20px;
+        font-weight: 650;
+        font-variant-numeric: tabular-nums;
+        text-align: center;
+      }
+
+      .mini-controls {
+        display: flex;
+        gap: 6px;
+      }
+
+      .icon-button {
+        width: 36px;
+        height: 34px;
+        display: inline-grid;
+        place-items: center;
+        border: 1px solid #6f88a0;
+        border-radius: 3px;
+        background: white;
+        color: #164f86;
+      }
+
+      .mini-mode {
+        color: #315b86;
+        font-size: 10px;
+        font-weight: 650;
+        text-align: right;
+      }
+
+      .sessions-panel {
+        grid-column: 2;
+        grid-row: 3;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .sessions-list {
+        min-height: 0;
+        display: grid;
+        grid-template-rows: repeat(3, 1fr);
+      }
+
+      .session-row {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: 7px minmax(0, 1fr) auto;
+        align-items: center;
+        border-bottom: 1px solid #ccd5de;
+      }
+
+      .session-row:last-child {
+        border-bottom: 0;
+      }
+
+      .session-stripe {
+        align-self: stretch;
+        background: #2b6cb0;
+      }
+      .session-row:nth-child(2) .session-stripe {
+        background: #0f9889;
+      }
+      .session-row:nth-child(3) .session-stripe {
+        background: #d2a620;
+      }
+
+      .session-main {
+        min-width: 0;
+        padding: 8px 10px;
+      }
+
+      .session-main strong,
+      .session-main span {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .session-main strong {
+        font-size: 12px;
+      }
+      .session-main span {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .session-stats {
+        min-width: 102px;
+        padding: 8px 11px 8px 5px;
+        text-align: right;
+      }
+
+      .session-stats strong,
+      .session-stats span {
+        display: block;
+      }
+
+      .session-stats strong {
+        font-family: var(--mono);
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .session-stats span {
+        margin-top: 4px;
+        color: #2a5e8e;
+        font-size: 10px;
+        font-weight: 700;
+      }
+
+      .modal-stage {
+        grid-column: 3;
+        grid-row: 3;
+        min-width: 0;
+        min-height: 0;
+        position: relative;
+        padding: 7px;
+        border: 1px solid #8399ae;
+        background:
+          linear-gradient(135deg, rgba(5, 31, 62, 0.055) 25%, transparent 25%) 0
+            0 / 7px 7px,
+          #e7edf3;
+      }
+
+      .completion-modal {
+        height: 100%;
+        position: relative;
+        border: 1px solid #0a2b55;
+        background: white;
+        box-shadow: var(--shadow);
+      }
+
+      .modal-top {
+        height: 47px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 13px;
+        border-bottom: 1px solid #aebdcb;
+        background: #f7f9fb;
+      }
+
+      .modal-title {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        margin: 0;
+        font-size: 14px;
+      }
+
+      .close-button {
+        width: 31px;
+        height: 31px;
+        display: grid;
+        place-items: center;
+        border: 0;
+        background: transparent;
+        color: #23476b;
+      }
+
+      .modal-content {
+        padding: 10px 13px 12px;
+      }
+
+      .completion-summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 9px;
+        padding-bottom: 9px;
+        border-bottom: 1px dashed #9fb0c0;
+      }
+
+      .completion-summary strong,
+      .completion-summary span {
+        display: block;
+      }
+      .completion-summary strong {
+        font-size: 12px;
+      }
+      .completion-summary span {
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .completion-time {
+        font-family: var(--mono);
+        font-size: 15px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .field-label {
+        display: block;
+        margin: 8px 0 4px;
+        color: #2d4967;
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .required {
+        color: #a52944;
+      }
+
+      .money-field {
+        display: grid;
+        grid-template-columns: 1fr 68px;
+      }
+
+      .money-field input,
+      .money-field select,
+      .note-input {
+        min-width: 0;
+        height: 37px;
+        border: 1px solid #7891aa;
+        border-radius: 0;
+        background: white;
+        color: var(--ink);
+      }
+
+      .money-field input {
+        padding: 0 10px;
+        border-right: 0;
+        font-family: var(--mono);
+        font-size: 14px;
+        font-weight: 650;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .money-field select {
+        padding: 0 6px;
+        font-size: 11px;
+        font-weight: 700;
+      }
+      .note-input {
+        width: 100%;
+        padding: 0 10px;
+        font-size: 11px;
+      }
+
+      .field-help {
+        margin: 4px 0 0;
+        color: var(--muted);
+        font-size: 9px;
+        line-height: 1.35;
+      }
+
+      .modal-actions {
+        display: grid;
+        grid-template-columns: 1fr 1.45fr;
+        gap: 7px;
+        margin-top: 9px;
+      }
+
+      .modal-actions .button {
+        min-height: 37px;
+        font-size: 11px;
+      }
+
+      .statusbar {
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 14px;
+        color: #b9cadd;
+        border-top: 1px solid #234467;
+        background: #061b37;
+        font-family: var(--mono);
+        font-size: 10px;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+      }
+
+      .statusbar-group {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+
+      .statusbar-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .statusbar-item + .statusbar-item {
+        padding-left: 16px;
+        border-left: 1px dotted #688099;
+      }
+
+      .status-square {
+        width: 7px;
+        height: 7px;
+        background: var(--teal);
+      }
+      .statusbar strong {
+        color: #e6edf4;
+        font-weight: 650;
+      }
+
+      @media (max-width: 1190px), (max-height: 760px) {
+        .app {
+          grid-template-columns: 72px minmax(0, 1fr);
+        }
+        .brand-block {
+          min-height: 72px;
+          justify-content: center;
+          padding: 14px 8px;
+        }
+        .brand-copy,
+        .nav-item span,
+        .workspace-stamp {
+          display: none;
+        }
+        .nav-item {
+          justify-content: center;
+          padding: 0;
+        }
+        .dashboard-grid {
+          grid-template-columns: minmax(300px, 1fr) minmax(330px, 1.1fr) minmax(
+              280px,
+              0.9fr
+            );
+        }
+        .time-readout {
+          font-size: 42px;
+        }
+        .pulse {
+          grid-template-columns: 104px repeat(4, minmax(0, 1fr));
+        }
+        .metric {
+          padding: 8px;
+        }
+        .metric-icon {
+          display: none;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          transition: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#dashboard">Skip to dashboard</a>
+
+    <svg
+      aria-hidden="true"
+      width="0"
+      height="0"
+      style="position: absolute; overflow: hidden"
+    >
+      <symbol id="i-grid" viewBox="0 0 24 24">
+        <rect x="3" y="3" width="7" height="7" />
+        <rect x="14" y="3" width="7" height="7" />
+        <rect x="3" y="14" width="7" height="7" />
+        <rect x="14" y="14" width="7" height="7" />
+      </symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24">
+        <path d="M3 6h6l2 2h10v11H3z" />
+      </symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7v6l4 2" />
+      </symbol>
+      <symbol id="i-chart" viewBox="0 0 24 24">
+        <path d="M4 20V10h4v10M10 20V4h4v16M16 20v-7h4v7" />
+      </symbol>
+      <symbol id="i-user" viewBox="0 0 24 24">
+        <circle cx="12" cy="8" r="4" />
+        <path d="M4 21c.7-4.5 3.4-7 8-7s7.3 2.5 8 7" />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="3" />
+        <path
+          d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"
+        />
+      </symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24">
+        <path d="M8 5v14M16 5v14" />
+      </symbol>
+      <symbol id="i-square" viewBox="0 0 24 24">
+        <rect x="6" y="6" width="12" height="12" />
+      </symbol>
+      <symbol id="i-note" viewBox="0 0 24 24">
+        <path d="M4 4h16v12H9l-5 4z" />
+        <path d="M8 8h8M8 12h5" />
+      </symbol>
+      <symbol id="i-money" viewBox="0 0 24 24">
+        <path
+          d="M12 3v18M17 7.5c-.8-1.6-2.4-2.5-5-2.5-3 0-5 1.3-5 3.5 0 5 10 2.2 10 7 0 2.1-2 3.5-5 3.5-2.7 0-4.5-1-5.3-2.8"
+        />
+      </symbol>
+      <symbol id="i-rate" viewBox="0 0 24 24">
+        <path d="M4 20V12M10 20V8M16 20V4M3 7l5-3 5 2 7-4" />
+      </symbol>
+      <symbol id="i-sessions" viewBox="0 0 24 24">
+        <rect x="4" y="5" width="16" height="15" />
+        <path d="M8 3v4M16 3v4M4 10h16" />
+      </symbol>
+      <symbol id="i-play" viewBox="0 0 24 24">
+        <path d="m8 5 11 7-11 7z" />
+      </symbol>
+      <symbol id="i-expand" viewBox="0 0 24 24">
+        <path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5" />
+      </symbol>
+      <symbol id="i-flag" viewBox="0 0 24 24">
+        <path d="M5 22V3M5 4h12l-2 4 2 4H5" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="m5 5 14 14M19 5 5 19" />
+      </symbol>
+    </svg>
+
+    <header class="titlebar" aria-label="Window title bar">
+      <div class="titlebar-brand">
+        <span class="app-glyph" aria-hidden="true"
+          ><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span
+        >TimeFarm
+      </div>
+      <div class="window-controls" aria-label="Window controls">
+        <button class="window-control" type="button" aria-label="Minimize">
+          −
+        </button>
+        <button class="window-control" type="button" aria-label="Maximize">
+          □
+        </button>
+        <button class="window-control close" type="button" aria-label="Close">
+          ×
+        </button>
+      </div>
+    </header>
+
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand-block">
+          <div class="brand-mark" aria-hidden="true"></div>
+          <div class="brand-copy">
+            <strong>TimeFarm</strong><span>Pixel ledger / A</span>
+          </div>
+        </div>
+
+        <nav class="navigation" aria-label="Primary navigation">
+          <a class="nav-item" href="#dashboard" aria-current="page"
+            ><svg class="icon" aria-hidden="true"><use href="#i-grid" /></svg
+            ><span>Dashboard</span></a
+          >
+          <a class="nav-item" href="#projects"
+            ><svg class="icon" aria-hidden="true"><use href="#i-folder" /></svg
+            ><span>Projects</span></a
+          >
+          <a class="nav-item" href="#history"
+            ><svg class="icon" aria-hidden="true"><use href="#i-clock" /></svg
+            ><span>History</span></a
+          >
+          <a class="nav-item" href="#analytics"
+            ><svg class="icon" aria-hidden="true"><use href="#i-chart" /></svg
+            ><span>Analytics</span></a
+          >
+          <div class="nav-divider" aria-hidden="true"></div>
+          <a class="nav-item" href="#profile"
+            ><svg class="icon" aria-hidden="true"><use href="#i-user" /></svg
+            ><span>Profile</span></a
+          >
+          <a class="nav-item" href="#settings"
+            ><svg class="icon" aria-hidden="true">
+              <use href="#i-settings" /></svg
+            ><span>Settings</span></a
+          >
+        </nav>
+
+        <div class="sidebar-spacer"></div>
+        <section class="workspace-stamp" aria-label="Workspace status">
+          <div class="eyebrow">Workspace</div>
+          <strong>Vinh / Local device</strong>
+          <p>
+            Offline-ready. Changes are saved locally and 2 sync operations are
+            queued.
+          </p>
+        </section>
+      </aside>
+
+      <main class="main" id="dashboard">
+        <header class="command-rail">
+          <div class="page-context">
+            <h1>Dashboard</h1>
+            <p>Wednesday, August 12 · active workday</p>
+          </div>
+          <div class="rail-status">
+            <span class="sample-label">Illustrative data</span>
+            <span class="status-chip">Saved locally</span>
+          </div>
+        </header>
+
+        <div class="dashboard-grid">
+          <section
+            class="panel timer-panel"
+            aria-labelledby="active-session-title"
+          >
+            <header class="panel-header">
+              <h2 class="panel-title" id="active-session-title">
+                Active session
+              </h2>
+              <span class="panel-meta">Started 09:02</span>
+            </header>
+
+            <div class="timer-project">
+              <div>
+                <div class="eyebrow">Current project</div>
+                <h2>Northstar Website</h2>
+                <div class="project-kind">
+                  <span class="project-dot"></span>Client work / Web design
+                </div>
+              </div>
+              <span class="running-flag">Running</span>
+            </div>
+
+            <div
+              class="chronometer"
+              aria-label="Elapsed time 2 hours, 18 minutes, 42 seconds"
+            >
+              <div class="seconds-wheel" aria-hidden="true"></div>
+              <div class="wheel-orbit" aria-hidden="true"></div>
+              <div class="second-pointer" aria-hidden="true"></div>
+              <span class="wheel-label w0" aria-hidden="true">00</span>
+              <span class="wheel-label w15" aria-hidden="true">15</span>
+              <span class="wheel-label w30" aria-hidden="true">30</span>
+              <span class="wheel-label w45" aria-hidden="true">45</span>
+              <div class="time-readout">02:18:42</div>
+              <div class="time-units" aria-hidden="true">
+                <span>Hours</span><span>Minutes</span><span>Seconds</span>
+              </div>
+            </div>
+
+            <div class="timer-actions">
+              <button class="button primary" type="button">
+                <svg class="icon" aria-hidden="true">
+                  <use href="#i-pause" /></svg
+                >Pause
+              </button>
+              <button class="button danger" type="button">
+                <svg class="icon" aria-hidden="true">
+                  <use href="#i-square" /></svg
+                >End session
+              </button>
+            </div>
+            <div class="timer-note">
+              <button type="button">
+                <svg class="icon" aria-hidden="true"><use href="#i-note" /></svg
+                >Add note or tag
+              </button>
+              <span>Local lease / this device</span>
+            </div>
+          </section>
+
+          <section class="panel trend-panel" aria-labelledby="trend-title">
+            <header class="panel-header">
+              <h2 class="panel-title" id="trend-title">7-day earnings trend</h2>
+              <select class="currency-select" aria-label="Trend currency">
+                <option>USD</option>
+              </select>
+            </header>
+            <div class="trend-body">
+              <div class="chart-wrap">
+                <svg
+                  viewBox="0 0 620 190"
+                  role="img"
+                  aria-labelledby="chart-name chart-description"
+                  preserveAspectRatio="none"
+                >
+                  <title id="chart-name">
+                    Illustrative seven-day earnings trend
+                  </title>
+                  <desc id="chart-description">
+                    Daily earnings rise from 280 dollars last Thursday to 463
+                    dollars today, with a seven-day total of 2,814 dollars.
+                  </desc>
+                  <defs>
+                    <pattern
+                      id="dots"
+                      width="4"
+                      height="4"
+                      patternUnits="userSpaceOnUse"
+                    >
+                      <circle
+                        cx="1"
+                        cy="1"
+                        r="0.75"
+                        fill="#145aa3"
+                        opacity="0.55"
+                      />
+                    </pattern>
+                  </defs>
+                  <g
+                    fill="#567089"
+                    font-family="Cascadia Mono, Consolas, monospace"
+                    font-size="10"
+                  >
+                    <text x="14" y="180">THU</text>
+                    <text x="101" y="180">FRI</text>
+                    <text x="187" y="180">SAT</text>
+                    <text x="272" y="180">SUN</text>
+                    <text x="357" y="180">MON</text>
+                    <text x="443" y="180">TUE</text>
+                    <text x="530" y="180">TODAY</text>
+                  </g>
+                  <g fill="#174f87">
+                    <rect x="20" y="93" width="42" height="72" />
+                    <rect x="106" y="75" width="42" height="90" />
+                    <rect x="192" y="109" width="42" height="56" />
+                    <rect x="278" y="82" width="42" height="83" />
+                    <rect x="364" y="64" width="42" height="101" />
+                    <rect x="450" y="42" width="42" height="123" />
+                  </g>
+                  <rect
+                    x="536"
+                    y="34"
+                    width="42"
+                    height="131"
+                    fill="url(#dots)"
+                    stroke="#145aa3"
+                    stroke-width="2"
+                  />
+                  <path
+                    d="M41 91 127 73 213 107 299 80 385 62 471 40 557 32"
+                    fill="none"
+                    stroke="#0f9889"
+                    stroke-width="2"
+                    stroke-linejoin="miter"
+                  />
+                  <g fill="#0f9889">
+                    <rect x="38" y="88" width="6" height="6" />
+                    <rect x="124" y="70" width="6" height="6" />
+                    <rect x="210" y="104" width="6" height="6" />
+                    <rect x="296" y="77" width="6" height="6" />
+                    <rect x="382" y="59" width="6" height="6" />
+                    <rect x="468" y="37" width="6" height="6" />
+                    <rect x="554" y="29" width="6" height="6" />
+                  </g>
+                  <g
+                    fill="#36536f"
+                    font-family="Cascadia Mono, Consolas, monospace"
+                    font-size="9"
+                  >
+                    <text x="0" y="166">$0</text>
+                    <text x="0" y="117">$200</text>
+                    <text x="0" y="69">$400</text>
+                    <text x="0" y="20">$600</text>
+                  </g>
+                </svg>
+              </div>
+              <aside class="chart-summary" aria-label="Trend summary">
+                <div>
+                  <div class="eyebrow">7-day total</div>
+                  <strong>$2,814.30</strong>
+                  <p>Original session currency: USD</p>
+                  <div class="delta">12.4% vs prior 7 days</div>
+                </div>
+                <div class="chart-key">Daily earnings</div>
+              </aside>
+            </div>
+          </section>
+
+          <section class="panel today-panel" aria-label="Today's pulse">
+            <div class="pulse">
+              <div class="pulse-heading">
+                <div class="eyebrow">Today / pulse</div>
+                <strong>Aug 12<br />local time</strong>
+              </div>
+              <div class="metric">
+                <span class="metric-icon"
+                  ><svg class="icon" aria-hidden="true">
+                    <use href="#i-clock" /></svg
+                ></span>
+                <div><span>Work time</span><strong>05:47</strong></div>
+              </div>
+              <div class="metric">
+                <span class="metric-icon"
+                  ><svg class="icon" aria-hidden="true">
+                    <use href="#i-money" /></svg
+                ></span>
+                <div><span>Earnings</span><strong>$463.50</strong></div>
+              </div>
+              <div class="metric">
+                <span class="metric-icon"
+                  ><svg class="icon" aria-hidden="true">
+                    <use href="#i-rate" /></svg
+                ></span>
+                <div><span>Effective rate</span><strong>$79.98/h</strong></div>
+              </div>
+              <div class="metric">
+                <span class="metric-icon"
+                  ><svg class="icon" aria-hidden="true">
+                    <use href="#i-sessions" /></svg
+                ></span>
+                <div><span>Sessions</span><strong>3</strong></div>
+              </div>
+            </div>
+          </section>
+
+          <div class="lower-left">
+            <section class="panel goal-panel" aria-labelledby="goal-title">
+              <header class="panel-header">
+                <h2 class="panel-title" id="goal-title">Monthly goal</h2>
+                <span class="panel-meta">11 days left</span>
+              </header>
+              <div class="goal-body">
+                <div class="goal-top">
+                  <strong>Earn $6,000 USD</strong
+                  ><span class="goal-percent">72%</span>
+                </div>
+                <div
+                  class="goal-track"
+                  role="img"
+                  aria-label="Goal is 72 percent complete"
+                >
+                  <i class="done"></i><i class="done"></i><i class="done"></i
+                  ><i class="done"></i><i class="done"></i><i class="done"></i
+                  ><i class="done"></i><i class="done"></i><i class="done"></i
+                  ><i class="done"></i><i class="done"></i><i class="done"></i
+                  ><i class="done"></i><i class="done"></i
+                  ><i class="current"></i><i></i><i></i><i></i><i></i><i></i>
+                </div>
+                <div class="goal-foot">
+                  <strong>$4,320 / $6,000</strong><span>On pace</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel mini-panel" aria-labelledby="mini-title">
+              <header class="panel-header">
+                <h2 class="panel-title" id="mini-title">Compact mini timer</h2>
+                <span class="panel-meta">Interactive</span>
+              </header>
+              <div class="mini-body">
+                <div class="mini-project">
+                  <strong>Northstar Website</strong
+                  ><span>Running · saved locally</span>
+                </div>
+                <div
+                  class="mini-time"
+                  aria-label="Elapsed time 2 hours, 18 minutes, 42 seconds"
+                >
+                  02:18:42
+                </div>
+                <div class="mini-controls">
+                  <button
+                    class="icon-button"
+                    type="button"
+                    aria-label="Pause compact timer"
+                  >
+                    <svg class="icon" aria-hidden="true">
+                      <use href="#i-pause" />
+                    </svg>
+                  </button>
+                  <button
+                    class="icon-button"
+                    type="button"
+                    aria-label="End compact timer"
+                  >
+                    <svg class="icon" aria-hidden="true">
+                      <use href="#i-square" />
+                    </svg>
+                  </button>
+                  <button
+                    class="icon-button"
+                    type="button"
+                    aria-label="Open full TimeFarm window"
+                  >
+                    <svg class="icon" aria-hidden="true">
+                      <use href="#i-expand" />
+                    </svg>
+                  </button>
+                </div>
+                <div class="mini-mode">Mini window · 336 × 96</div>
+              </div>
+            </section>
+          </div>
+
+          <section
+            class="panel sessions-panel"
+            aria-labelledby="sessions-title"
+          >
+            <header class="panel-header">
+              <h2 class="panel-title" id="sessions-title">Recent sessions</h2>
+              <button
+                type="button"
+                style="
+                  border: 0;
+                  background: transparent;
+                  color: #1c568b;
+                  font-size: 11px;
+                  font-weight: 700;
+                "
+              >
+                View history →
+              </button>
+            </header>
+            <div class="sessions-list">
+              <article class="session-row">
+                <span class="session-stripe"></span>
+                <div class="session-main">
+                  <strong>Northstar Website</strong
+                  ><span>Today · 09:02–11:21 · Web design</span>
+                </div>
+                <div class="session-stats">
+                  <strong>02:18:42</strong><span>$174.80 USD</span>
+                </div>
+              </article>
+              <article class="session-row">
+                <span class="session-stripe"></span>
+                <div class="session-main">
+                  <strong>Brand Identity Pack</strong
+                  ><span>Today · 13:05–14:50 · Logo design</span>
+                </div>
+                <div class="session-stats">
+                  <strong>01:45:10</strong><span>$131.38 USD</span>
+                </div>
+              </article>
+              <article class="session-row">
+                <span class="session-stripe"></span>
+                <div class="session-main">
+                  <strong>Client Consultation</strong
+                  ><span>Today · 15:15–16:58 · Strategy</span>
+                </div>
+                <div class="session-stats">
+                  <strong>01:43:28</strong><span>$157.32 USD</span>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <div class="modal-stage" aria-label="Completion modal specimen stage">
+            <section
+              class="completion-modal"
+              role="dialog"
+              aria-modal="false"
+              aria-labelledby="complete-title"
+              aria-describedby="complete-help"
+            >
+              <header class="modal-top">
+                <h2 class="modal-title" id="complete-title">
+                  <svg class="icon" aria-hidden="true">
+                    <use href="#i-flag" /></svg
+                  >Complete session
+                </h2>
+                <button
+                  class="close-button"
+                  type="button"
+                  aria-label="Close completion dialog"
+                >
+                  <svg class="icon" aria-hidden="true"><use href="#i-x" /></svg>
+                </button>
+              </header>
+              <form class="modal-content">
+                <div class="completion-summary">
+                  <div>
+                    <strong>Northstar Website</strong
+                    ><span>Started today at 09:02</span>
+                  </div>
+                  <div class="completion-time">02:18:42</div>
+                </div>
+                <label class="field-label" for="earnings"
+                  >Actual earnings <span class="required">*</span></label
+                >
+                <div class="money-field">
+                  <input
+                    id="earnings"
+                    inputmode="decimal"
+                    value="174.80"
+                    aria-describedby="complete-help"
+                  /><select aria-label="Currency">
+                    <option>USD</option>
+                  </select>
+                </div>
+                <p class="field-help" id="complete-help">
+                  Required. Enter 0 explicitly when the session is unpaid.
+                </p>
+                <label class="field-label" for="completion-note"
+                  >Note
+                  <span style="color: #6f8296; font-weight: 500"
+                    >(optional)</span
+                  ></label
+                >
+                <input
+                  class="note-input"
+                  id="completion-note"
+                  value="Homepage design system handoff"
+                />
+                <div class="modal-actions">
+                  <button class="button" type="button">Keep working</button
+                  ><button class="button primary" type="submit">
+                    Save & complete
+                  </button>
+                </div>
+              </form>
+            </section>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <footer class="statusbar" aria-label="Application status">
+      <div class="statusbar-group">
+        <span class="statusbar-item"
+          ><i class="status-square"></i>Offline-ready</span
+        ><span class="statusbar-item">Sync queued: <strong>2</strong></span>
+      </div>
+      <div class="statusbar-group">
+        <span class="statusbar-item">Device: <strong>Vinh-PC</strong></span
+        ><span class="statusbar-item">TimeFarm 0.2.1 beta</span>
+      </div>
+    </footer>
+  </body>
+</html>

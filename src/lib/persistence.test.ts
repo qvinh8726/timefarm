@@ -1,9 +1,25 @@
 import { describe, expect, it } from "vitest";
+import { createEmptyState, type GoalKind } from "../domain/types";
 import {
   loadPersistedState,
   normalizePersistedState,
   parsePersistedState,
 } from "./persistence";
+
+function stateWithGoal(kind: GoalKind, target: number) {
+  return {
+    ...createEmptyState(),
+    goals: [
+      {
+        id: "goal-1",
+        kind,
+        target,
+        createdAt: "2026-08-01T00:00:00.000Z",
+        syncStatus: "queued" as const,
+      },
+    ],
+  };
+}
 
 describe("normalizePersistedState", () => {
   it("migrates an older renderer snapshot with missing dashboard preferences without losing facts", () => {
@@ -91,6 +107,50 @@ describe("normalizePersistedState", () => {
     ).toThrow(/invalid state data/i);
   });
 
+  it("uses Unicode code-point text bounds that match the main process and cloud", () => {
+    const state = createEmptyState();
+    state.account = {
+      id: "account-1",
+      displayName: "😀".repeat(100),
+      country: "VN",
+      language: "vi",
+      currency: "VND",
+      timezone: "Asia/Saigon",
+      createdAt: "2026-08-01T00:00:00.000Z",
+    };
+    state.projects = [
+      {
+        id: "project-1",
+        name: "😀".repeat(160),
+        paymentModel: "per_session",
+        color: "😀".repeat(64),
+        icon: "😀".repeat(32),
+        status: "active",
+        createdAt: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z",
+        syncStatus: "local",
+      },
+    ];
+    expect(parsePersistedState(state).account?.displayName).toBe(
+      state.account.displayName,
+    );
+
+    for (const mutate of [
+      (candidate: typeof state) =>
+        (candidate.account!.displayName = "😀".repeat(101)),
+      (candidate: typeof state) => (candidate.account!.displayName = "\u00a0"),
+      (candidate: typeof state) =>
+        (candidate.projects[0].name = "😀".repeat(161)),
+      (candidate: typeof state) => (candidate.projects[0].color = "\u00a0"),
+      (candidate: typeof state) =>
+        (candidate.projects[0].icon = "😀".repeat(33)),
+    ]) {
+      const invalid = structuredClone(state);
+      mutate(invalid);
+      expect(() => parsePersistedState(invalid)).toThrow(/invalid state data/i);
+    }
+  });
+
   it("does not fabricate an empty desktop state when the durable read fails", async () => {
     const target = globalThis as typeof globalThis & { window?: unknown };
     const original = target.window;
@@ -104,4 +164,38 @@ describe("normalizePersistedState", () => {
     await expect(loadPersistedState()).rejects.toThrow("SQLite unavailable");
     target.window = original;
   });
+
+  it.each([
+    ["hours_daily", 0.25],
+    ["hours_weekly", Number.MAX_SAFE_INTEGER],
+    ["earnings_daily", 1],
+    ["earnings_weekly", Number.MAX_SAFE_INTEGER],
+    ["earnings_monthly", 25_000],
+    ["projects_completed", 1],
+  ] satisfies [GoalKind, number][])(
+    "accepts a valid persisted %s target",
+    (kind, target) => {
+      expect(
+        parsePersistedState(stateWithGoal(kind, target)).goals[0],
+      ).toMatchObject({ kind, target });
+    },
+  );
+
+  it.each([
+    ["hours_daily", 0],
+    ["hours_weekly", -1],
+    ["hours_daily", Number.MAX_SAFE_INTEGER + 1],
+    ["earnings_daily", 1.5],
+    ["earnings_weekly", 1.5],
+    ["earnings_monthly", 1.5],
+    ["projects_completed", 1.5],
+    ["projects_completed", Number.MAX_SAFE_INTEGER + 1],
+  ] satisfies [GoalKind, number][])(
+    "rejects an invalid persisted %s target of %s",
+    (kind, target) => {
+      expect(() => parsePersistedState(stateWithGoal(kind, target))).toThrow(
+        /invalid state data/i,
+      );
+    },
+  );
 });

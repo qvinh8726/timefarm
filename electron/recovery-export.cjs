@@ -1,8 +1,9 @@
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 
 const RECOVERY_FILE_PATTERN =
-  /^(?:workly\.db(?:-wal|-shm)?|workly\.db\.pre-v\d+\.backup)$/;
+  /^(?:workly\.db(?:-wal|-shm)?|workly\.db\.pre-v\d+\.backup|workly-state\.json(?:\.(?:migrating|migrated)|(?:\.migrating)?\.skipped-[A-Za-z0-9-]+)?)$/;
 
 function recoverySourceFiles(userDataPath) {
   if (!path.isAbsolute(userDataPath))
@@ -29,7 +30,7 @@ function exportRecoveryCopy({
     throw new Error("The recovery destination must be an absolute path.");
   const sources = recoverySourceFiles(userDataPath);
   if (sources.length === 0)
-    throw new Error("No TimeFarm database or migration backup was found.");
+    throw new Error("No recoverable TimeFarm local data was found.");
 
   const destination = path.join(
     parentDirectory,
@@ -43,12 +44,26 @@ function exportRecoveryCopy({
       fs.constants.COPYFILE_EXCL,
     );
   }
+  const manifest = sources.map((source) => {
+    const bytes = fs.readFileSync(source);
+    return {
+      file: path.basename(source),
+      bytes: bytes.length,
+      sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
+    };
+  });
+  fs.writeFileSync(
+    path.join(destination, "RECOVERY-MANIFEST.json"),
+    `${JSON.stringify({ version: 1, createdAt: now.toISOString(), files: manifest }, null, 2)}\n`,
+    { encoding: "utf8", flag: "wx" },
+  );
   fs.writeFileSync(
     path.join(destination, "RECOVERY.txt"),
     [
       "TimeFarm local-data recovery copy",
       "",
       "Keep every file in this folder together. The .backup file is the consistent pre-migration snapshot when one is present.",
+      "This folder can contain plaintext work history and earnings. Store it somewhere private.",
       "Do not replace the live app-data files while TimeFarm is running. Contact the support channel documented in SUPPORT.md before restoring manually.",
       "",
       `Created: ${now.toISOString()}`,

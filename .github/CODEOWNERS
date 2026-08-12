@@ -1,0 +1,3 @@
+# Require an explicit owner review for every part of the product. Repository
+# rulesets/branch protection still need to make CODEOWNERS review mandatory.
+* @qvinh8726

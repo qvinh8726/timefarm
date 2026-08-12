@@ -108,6 +108,30 @@ test("command-backed overlay actions use the same typed timer path and respect a
   assert.match(result.message, /another signed-in device/i);
 });
 
+test("overlay pause and resume forward the timestamp captured at IPC receipt", async () => {
+  const repository = createRepository(stateWithAccount());
+  const executions = [];
+  const intentTimestamp = "2026-08-10T01:23:45.000Z";
+  const action = createOverlayTimerActionHandler({
+    repository,
+    commandService: {
+      preflight: () => {},
+      execute: (command, options) => {
+        executions.push({ command, options });
+        return { command: command.type, state: repository.state, result: {} };
+      },
+    },
+  });
+
+  assert.equal((await action("pause", { intentTimestamp })).ok, true);
+  assert.deepEqual(executions, [
+    {
+      command: { type: "session.pause", payload: {} },
+      options: { intentTimestamp },
+    },
+  ]);
+});
+
 test("command-backed overlay preflights a stale timer action before it requests a lease", async () => {
   const repository = createRepository(stateWithAccount());
   let leaseRequests = 0;

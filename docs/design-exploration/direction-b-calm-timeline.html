@@ -1,0 +1,2024 @@
+<!--
+  ASSUMPTIONS
+  - This direction is a 1440 x 900 design-study surface for a persistent Windows desktop app.
+  - The active state is local and healthy; cloud sync is optional and currently clear.
+  - Northstar Website is already running, so Pause and End are the primary timer controls.
+
+  FORM MOTIF
+  - The interface behaves like a calm timeline plus earnings ledger: open rails, precise rules,
+    tabular figures, and one right-side session inspector instead of a grid of equal cards.
+  - Lime is reserved for Start / Continue decisions; completion uses utility teal.
+
+  DATA DISCLAIMER
+  - All projects, sessions, times, goals, rates, and earnings shown below are illustrative design
+    sample data. They do not represent a real user account or verified financial results.
+-->
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TimeFarm — Calm Timeline direction</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --canvas: #f5f7f8;
+        --surface: #ffffff;
+        --surface-muted: #f3f6f7;
+        --surface-raised: #fbfcfc;
+        --ink: #17212b;
+        --ink-soft: #52606f;
+        --ink-faint: #74808d;
+        --line: #d9e0e4;
+        --line-strong: #c7d0d5;
+        --teal: #0f8f84;
+        --teal-strong: #08766e;
+        --teal-pale: #dff3f1;
+        --blue: #4d7fd6;
+        --blue-pale: #e9effb;
+        --lime: #d5ff7d;
+        --lime-ink: #22310a;
+        --rose: #c84455;
+        --rose-pale: #fff0f2;
+        --good: #2c7d5d;
+        --idle: #e4e8ea;
+        --shadow: 0 14px 38px rgba(27, 42, 55, 0.12);
+        --focus: 0 0 0 3px rgba(15, 143, 132, 0.23);
+      }
+
+      html[data-theme="dark"] {
+        color-scheme: dark;
+        --canvas: #101619;
+        --surface: #171e22;
+        --surface-muted: #20282d;
+        --surface-raised: #1b2327;
+        --ink: #eef4f5;
+        --ink-soft: #b8c5ca;
+        --ink-faint: #8f9da4;
+        --line: #303b41;
+        --line-strong: #455158;
+        --teal: #45d6c3;
+        --teal-strong: #6de1d2;
+        --teal-pale: #173d3a;
+        --blue: #7ca6ed;
+        --blue-pale: #1f304c;
+        --lime: #d5ff7d;
+        --lime-ink: #172105;
+        --rose: #ff8997;
+        --rose-pale: #42242a;
+        --good: #72d4a7;
+        --idle: #2e373c;
+        --shadow: 0 18px 44px rgba(0, 0, 0, 0.36);
+        --focus: 0 0 0 3px rgba(69, 214, 195, 0.27);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: var(--canvas);
+        color: var(--ink);
+        font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+        font-size: 14px;
+      }
+
+      button,
+      input,
+      select,
+      textarea {
+        font: inherit;
+      }
+
+      button,
+      [tabindex] {
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      button:focus-visible,
+      input:focus-visible,
+      select:focus-visible,
+      textarea:focus-visible,
+      a:focus-visible {
+        outline: none;
+        box-shadow: var(--focus);
+      }
+
+      .skip-link {
+        position: fixed;
+        z-index: 100;
+        top: 8px;
+        left: 8px;
+        transform: translateY(-140%);
+        padding: 9px 12px;
+        border-radius: 7px;
+        background: var(--ink);
+        color: var(--surface);
+        text-decoration: none;
+      }
+
+      .skip-link:focus {
+        transform: translateY(0);
+      }
+
+      .icon {
+        width: 18px;
+        height: 18px;
+        flex: 0 0 auto;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      .icon-sm {
+        width: 15px;
+        height: 15px;
+      }
+      .icon-lg {
+        width: 23px;
+        height: 23px;
+      }
+
+      .app {
+        width: 100vw;
+        height: 100vh;
+        min-width: 1080px;
+        min-height: 700px;
+        display: grid;
+        grid-template-rows: 45px minmax(0, 1fr);
+        border: 1px solid var(--line-strong);
+        background: var(--surface);
+      }
+
+      .titlebar {
+        display: grid;
+        grid-template-columns: 232px 1fr auto;
+        align-items: center;
+        border-bottom: 1px solid var(--line);
+        background: var(--surface-raised);
+        user-select: none;
+      }
+
+      .brand {
+        height: 100%;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding-left: 14px;
+        color: var(--ink);
+        font-weight: 650;
+        letter-spacing: -0.01em;
+      }
+
+      .brand-mark {
+        width: 25px;
+        height: 25px;
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--line-strong);
+        border-radius: 7px;
+        background: var(--surface);
+        color: var(--teal-strong);
+      }
+
+      .titlebar-center {
+        color: var(--ink-faint);
+        font-size: 12px;
+        text-align: center;
+      }
+
+      .window-controls {
+        height: 100%;
+        display: flex;
+      }
+
+      .window-control {
+        width: 45px;
+        height: 100%;
+        display: grid;
+        place-items: center;
+        border: 0;
+        background: transparent;
+        color: var(--ink-soft);
+        cursor: default;
+      }
+
+      .window-control:hover {
+        background: var(--surface-muted);
+      }
+      .window-control.close:hover {
+        background: #c42b1c;
+        color: #fff;
+      }
+
+      .body-grid {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: 232px minmax(590px, 1fr) 272px;
+      }
+
+      .sidebar {
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        border-right: 1px solid var(--line);
+        background: var(--surface-raised);
+        padding: 15px 12px 13px;
+      }
+
+      .nav {
+        display: grid;
+        gap: 3px;
+      }
+
+      .nav-item {
+        position: relative;
+        min-height: 43px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 0 12px;
+        border-radius: 7px;
+        color: var(--ink-soft);
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: 520;
+      }
+
+      .nav-item:hover {
+        background: var(--surface-muted);
+        color: var(--ink);
+      }
+
+      .nav-item[aria-current="page"] {
+        color: var(--ink);
+        background: var(--surface-muted);
+        font-weight: 660;
+      }
+
+      .nav-item[aria-current="page"]::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 10px;
+        bottom: 10px;
+        width: 3px;
+        border-radius: 2px;
+        background: var(--teal);
+      }
+
+      .nav-rule {
+        height: 1px;
+        background: var(--line);
+        margin: 8px 3px;
+      }
+
+      .sidebar-label {
+        margin: 18px 9px 9px;
+        color: var(--ink-faint);
+        font-size: 12px;
+        font-weight: 650;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .active-tile,
+      .mini-timer {
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: var(--surface);
+      }
+
+      .active-tile {
+        padding: 12px;
+      }
+
+      .project-line,
+      .mini-row,
+      .account-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .project-line strong {
+        font-size: 13px;
+      }
+
+      .status-dot {
+        width: 9px;
+        height: 9px;
+        flex: 0 0 auto;
+        border-radius: 50%;
+        background: var(--teal);
+        box-shadow: 0 0 0 3px var(--teal-pale);
+      }
+
+      .ellipsis {
+        margin-left: auto;
+        border: 0;
+        background: transparent;
+        color: var(--ink-soft);
+        font-weight: 800;
+        line-height: 1;
+      }
+
+      .task-label {
+        margin: 6px 0 12px 17px;
+        color: var(--ink-faint);
+        font-size: 12px;
+      }
+
+      .side-timer {
+        margin: 0 0 12px;
+        text-align: center;
+        font-family: "Cascadia Mono", Consolas, monospace;
+        font-size: 29px;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0.02em;
+      }
+
+      .side-actions {
+        display: grid;
+        gap: 7px;
+      }
+
+      .button {
+        min-height: 37px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        border: 1px solid var(--line-strong);
+        border-radius: 7px;
+        background: var(--surface);
+        color: var(--ink);
+        padding: 0 13px;
+        font-weight: 620;
+        cursor: pointer;
+        transition:
+          background-color 140ms ease,
+          border-color 140ms ease,
+          color 140ms ease;
+      }
+
+      .button:hover {
+        background: var(--surface-muted);
+      }
+      .button.primary {
+        border-color: var(--teal);
+        background: var(--teal);
+        color: #fff;
+      }
+      .button.primary:hover {
+        border-color: var(--teal-strong);
+        background: var(--teal-strong);
+      }
+      .button.start {
+        border-color: #b8df61;
+        background: var(--lime);
+        color: var(--lime-ink);
+      }
+      .button.danger {
+        border-color: color-mix(in srgb, var(--rose), transparent 45%);
+        color: var(--rose);
+      }
+      .button.danger:hover {
+        background: var(--rose-pale);
+      }
+      .button.quiet {
+        border-color: transparent;
+        background: transparent;
+        color: var(--ink-soft);
+      }
+      .button.compact {
+        min-height: 32px;
+        padding: 0 10px;
+        font-size: 12px;
+      }
+      .button.icon-button {
+        width: 34px;
+        min-height: 34px;
+        padding: 0;
+      }
+
+      .mini-timer {
+        margin-top: 11px;
+        overflow: hidden;
+      }
+
+      .mini-head {
+        min-height: 37px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 11px;
+        border-bottom: 1px solid var(--line);
+        color: var(--ink-soft);
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .mini-content {
+        padding: 10px;
+      }
+
+      .mini-row {
+        min-width: 0;
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .mini-row .mini-project {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .mini-time {
+        margin-left: auto;
+        font-family: "Cascadia Mono", Consolas, monospace;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .mini-actions {
+        display: grid;
+        grid-template-columns: 1fr 34px;
+        gap: 6px;
+        margin-top: 9px;
+      }
+
+      .account {
+        margin-top: auto;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: var(--surface);
+        padding: 9px;
+      }
+
+      .account img {
+        width: 34px;
+        height: 34px;
+        object-fit: cover;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: #e8f5f7;
+      }
+
+      .account-copy {
+        min-width: 0;
+        line-height: 1.2;
+      }
+      .account-copy strong {
+        display: block;
+        font-size: 12px;
+      }
+      .account-copy span {
+        color: var(--teal-strong);
+        font-size: 12px;
+      }
+
+      .workspace {
+        min-width: 0;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        background: var(--surface);
+        overflow: hidden;
+      }
+
+      .workspace-scroll {
+        min-height: 0;
+        flex: 1;
+        overflow: auto;
+        scrollbar-width: thin;
+        padding: 22px 27px 0;
+      }
+
+      .page-head {
+        min-height: 41px;
+        display: flex;
+        align-items: flex-start;
+        gap: 22px;
+      }
+
+      .page-title {
+        margin: 0;
+        font-size: 28px;
+        line-height: 1.2;
+        font-weight: 690;
+        letter-spacing: -0.025em;
+      }
+
+      .date-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 31px;
+        color: var(--ink-soft);
+        font-weight: 540;
+      }
+
+      .illustrative {
+        align-self: center;
+        margin-left: auto;
+        color: var(--ink-faint);
+        font-size: 12px;
+      }
+
+      .range-controls {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        margin-left: 4px;
+      }
+
+      .segmented {
+        height: 31px;
+        display: inline-flex;
+        border: 1px solid var(--line-strong);
+        border-radius: 7px;
+        overflow: hidden;
+      }
+
+      .segmented button {
+        min-width: 52px;
+        border: 0;
+        border-right: 1px solid var(--line);
+        background: var(--surface);
+        color: var(--ink-soft);
+        font-size: 12px;
+        cursor: pointer;
+      }
+
+      .segmented button:last-child {
+        border-right: 0;
+      }
+      .segmented button.active {
+        background: var(--surface-muted);
+        color: var(--ink);
+        font-weight: 670;
+      }
+
+      .timeline {
+        margin-top: 8px;
+        padding: 18px 0 15px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .time-labels {
+        display: grid;
+        grid-template-columns: repeat(9, 1fr);
+        color: var(--ink-faint);
+        font-family: "Cascadia Mono", Consolas, monospace;
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .time-labels span:not(:first-child):not(:last-child) {
+        text-align: center;
+      }
+      .time-labels span:last-child {
+        text-align: right;
+      }
+
+      .rail-wrap {
+        position: relative;
+        margin-top: 16px;
+        padding-top: 9px;
+      }
+
+      .ticks {
+        position: absolute;
+        inset: 0 0 auto;
+        height: 9px;
+        background: repeating-linear-gradient(
+          to right,
+          var(--line-strong) 0 1px,
+          transparent 1px 2.0833%
+        );
+        -webkit-mask: linear-gradient(to bottom, #000 0 5px, transparent 5px);
+        mask: linear-gradient(to bottom, #000 0 5px, transparent 5px);
+      }
+
+      .timeline-rail {
+        position: relative;
+        height: 21px;
+        overflow: hidden;
+        border-radius: 3px;
+        background: var(--idle);
+      }
+
+      .segment {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        border-left: 2px solid var(--surface);
+      }
+      .segment.focus {
+        background: var(--teal);
+      }
+      .segment.client {
+        background: var(--blue);
+      }
+      .segment.admin {
+        background: repeating-linear-gradient(
+          135deg,
+          transparent 0 3px,
+          var(--ink-faint) 3px 5px
+        );
+        opacity: 0.65;
+      }
+      .segment.open {
+        background: repeating-linear-gradient(
+          135deg,
+          transparent 0 3px,
+          var(--teal) 3px 5px
+        );
+        opacity: 0.8;
+      }
+
+      .now-marker {
+        position: absolute;
+        left: 51.5%;
+        top: -18px;
+        bottom: -2px;
+        width: 1px;
+        background: var(--teal);
+        z-index: 2;
+      }
+
+      .now-marker::before {
+        content: "11:32 AM";
+        position: absolute;
+        top: -19px;
+        left: 50%;
+        transform: translateX(-50%);
+        white-space: nowrap;
+        border-radius: 4px;
+        background: var(--teal);
+        color: #fff;
+        padding: 3px 5px;
+        font-family: "Cascadia Mono", Consolas, monospace;
+        font-size: 10px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .timeline-legend {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        margin-top: 12px;
+        color: var(--ink-soft);
+        font-size: 12px;
+      }
+
+      .legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .legend-swatch {
+        width: 9px;
+        height: 9px;
+        border-radius: 2px;
+        background: var(--idle);
+      }
+      .legend-swatch.focus {
+        background: var(--teal);
+      }
+      .legend-swatch.client {
+        background: var(--blue);
+      }
+      .legend-swatch.admin {
+        background: repeating-linear-gradient(
+          135deg,
+          transparent 0 2px,
+          var(--ink-faint) 2px 4px
+        );
+      }
+      .timeline-total {
+        margin-left: auto;
+        color: var(--ink);
+      }
+      .mono {
+        font-family: "Cascadia Mono", Consolas, monospace;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .pulse-band {
+        min-height: 91px;
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        align-items: center;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .pulse-item {
+        min-width: 0;
+        display: grid;
+        grid-template-columns: 35px 1fr;
+        align-items: center;
+        gap: 9px;
+        padding: 0 19px;
+        border-right: 1px solid var(--line);
+      }
+
+      .pulse-item:first-child {
+        padding-left: 2px;
+      }
+      .pulse-item:last-child {
+        border-right: 0;
+      }
+      .pulse-icon {
+        color: var(--ink-faint);
+      }
+      .pulse-copy span {
+        display: block;
+        color: var(--ink-faint);
+        font-size: 12px;
+      }
+      .pulse-copy strong {
+        display: inline-block;
+        margin-top: 2px;
+        font-size: 21px;
+        font-weight: 570;
+        letter-spacing: -0.025em;
+      }
+      .pulse-copy small {
+        color: var(--ink-faint);
+        font-size: 12px;
+      }
+
+      .goal-row {
+        min-height: 65px;
+        display: grid;
+        grid-template-columns: auto minmax(150px, 1fr) auto auto auto;
+        align-items: center;
+        gap: 15px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .goal-name {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 170px;
+        font-weight: 630;
+      }
+
+      .progress {
+        height: 7px;
+        overflow: hidden;
+        border-radius: 10px;
+        background: var(--idle);
+      }
+
+      .progress > span {
+        display: block;
+        width: 54%;
+        height: 100%;
+        border-radius: inherit;
+        background: var(--teal);
+      }
+
+      .goal-value {
+        font-size: 12px;
+        color: var(--ink-soft);
+        white-space: nowrap;
+      }
+      .goal-percent {
+        min-width: 36px;
+        text-align: right;
+        font-weight: 700;
+      }
+
+      .lower-grid {
+        display: grid;
+        grid-template-columns: minmax(300px, 0.95fr) minmax(360px, 1.2fr);
+        min-height: 282px;
+      }
+
+      .trend-panel,
+      .recent-panel {
+        padding: 20px 14px 8px 0;
+      }
+      .recent-panel {
+        padding-left: 20px;
+        padding-right: 0;
+        border-left: 1px solid var(--line);
+      }
+
+      .section-head {
+        min-height: 25px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 9px;
+      }
+
+      .section-head h2 {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 680;
+      }
+      .section-head span {
+        color: var(--ink-faint);
+        font-size: 12px;
+      }
+
+      .trend-chart {
+        width: 100%;
+        height: 180px;
+        display: block;
+        overflow: visible;
+      }
+      .chart-rule {
+        stroke: var(--line);
+        stroke-width: 1;
+      }
+      .chart-label {
+        fill: var(--ink-faint);
+        font:
+          10px "Segoe UI",
+          sans-serif;
+      }
+      .chart-value {
+        fill: var(--ink-soft);
+        font:
+          10px "Cascadia Mono",
+          Consolas,
+          monospace;
+      }
+      .trend-area {
+        fill: color-mix(in srgb, var(--teal), transparent 86%);
+      }
+      .trend-line {
+        fill: none;
+        stroke: var(--teal);
+        stroke-width: 2;
+      }
+      .trend-dot {
+        fill: var(--teal);
+        stroke: var(--surface);
+        stroke-width: 2;
+      }
+
+      .text-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 30px;
+        color: var(--teal-strong);
+        text-decoration: none;
+        font-size: 12px;
+        font-weight: 620;
+      }
+
+      .table-head,
+      .session-row {
+        display: grid;
+        grid-template-columns: minmax(160px, 1.4fr) 78px 72px 53px;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .table-head {
+        min-height: 30px;
+        border-bottom: 1px solid var(--line);
+        color: var(--ink-faint);
+        font-size: 11px;
+      }
+
+      .session-row {
+        min-height: 56px;
+        border-bottom: 1px solid var(--line);
+        font-size: 12px;
+      }
+
+      .session-project {
+        min-width: 0;
+      }
+      .session-project strong {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+      }
+      .session-project span {
+        display: block;
+        margin: 3px 0 0 17px;
+        color: var(--ink-faint);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .project-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--teal);
+      }
+      .project-dot.blue {
+        background: var(--blue);
+      }
+      .project-dot.hatch {
+        border-radius: 1px;
+        background: repeating-linear-gradient(
+          135deg,
+          transparent 0 2px,
+          var(--ink-faint) 2px 4px
+        );
+      }
+      .row-actions {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 3px;
+      }
+      .row-actions button {
+        width: 27px;
+        height: 27px;
+        display: grid;
+        place-items: center;
+        padding: 0;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+        color: var(--ink-soft);
+      }
+      .row-actions button:last-child {
+        border-color: transparent;
+      }
+
+      .completion-specimen {
+        flex: 0 0 auto;
+        margin: 0 27px 16px;
+        border: 1px solid var(--line-strong);
+        border-radius: 9px;
+        background: var(--surface-raised);
+        box-shadow: 0 -10px 24px rgba(27, 42, 55, 0.04);
+      }
+
+      .completion-specimen[hidden] {
+        display: none;
+      }
+
+      .completion-grid {
+        min-height: 104px;
+        display: grid;
+        grid-template-columns: 185px 126px 142px minmax(180px, 1fr) auto;
+        align-items: end;
+        gap: 12px;
+        padding: 12px;
+      }
+
+      .completion-title {
+        align-self: start;
+        padding-top: 2px;
+      }
+      .completion-title strong {
+        display: block;
+        font-size: 14px;
+      }
+      .completion-title span {
+        display: block;
+        max-width: 170px;
+        margin-top: 4px;
+        color: var(--ink-soft);
+        font-size: 12px;
+        line-height: 1.35;
+      }
+
+      .field {
+        min-width: 0;
+      }
+      .field label {
+        display: block;
+        margin-bottom: 5px;
+        color: var(--ink-soft);
+        font-size: 12px;
+      }
+      .required {
+        color: var(--rose);
+      }
+
+      .field input,
+      .field select {
+        width: 100%;
+        height: 43px;
+        border: 1px solid var(--line-strong);
+        border-radius: 6px;
+        background: var(--surface);
+        color: var(--ink);
+        padding: 0 10px;
+      }
+
+      .completion-actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .session-inspector {
+        min-width: 0;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        border-left: 1px solid var(--line);
+        background: var(--surface-raised);
+        padding: 20px 16px 15px;
+        overflow: auto;
+      }
+
+      .inspector-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        color: var(--ink-soft);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+      }
+
+      .inspector-project {
+        margin-top: 20px;
+      }
+      .inspector-project .project-line strong {
+        font-size: 14px;
+      }
+      .inspector-project .task-label {
+        margin-bottom: 0;
+      }
+
+      .inspector-time {
+        margin: 24px 0 2px;
+        font-family: "Cascadia Mono", Consolas, monospace;
+        font-size: 35px;
+        font-weight: 520;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: -0.035em;
+      }
+
+      .running-label {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        color: var(--good);
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .running-pulse {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: currentColor;
+      }
+
+      .inspector-facts {
+        display: grid;
+        gap: 11px;
+        margin: 21px 0 0;
+      }
+
+      .inspector-facts div {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .inspector-facts dt {
+        color: var(--ink-faint);
+        font-size: 12px;
+      }
+      .inspector-facts dd {
+        margin: 0;
+        font-variant-numeric: tabular-nums;
+        font-size: 12px;
+      }
+
+      .inspector-section {
+        margin-top: 22px;
+        padding-top: 18px;
+        border-top: 1px solid var(--line);
+      }
+
+      .inspector-section h3 {
+        margin: 0 0 13px;
+        font-size: 12px;
+        font-weight: 680;
+      }
+
+      .budget-row {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 7px;
+        color: var(--ink-soft);
+        font-size: 11px;
+      }
+
+      .note-box {
+        width: 100%;
+        min-height: 66px;
+        resize: none;
+        border: 1px solid var(--line-strong);
+        border-radius: 7px;
+        background: var(--surface);
+        color: var(--ink);
+        padding: 9px 10px;
+        font-size: 12px;
+      }
+
+      .tag-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        min-height: 26px;
+        padding: 0 8px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--surface);
+        color: var(--ink-soft);
+        font-size: 11px;
+      }
+
+      .sync-status {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        margin-top: auto;
+        padding: 12px 0 13px;
+        color: var(--ink-faint);
+        font-size: 11px;
+      }
+
+      .inspector-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+
+      .theme-toggle {
+        width: 31px;
+        height: 31px;
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+        color: var(--ink-soft);
+        cursor: pointer;
+      }
+
+      .live-region {
+        position: fixed;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+      }
+
+      @media (max-width: 1180px) {
+        .body-grid {
+          grid-template-columns: 76px minmax(590px, 1fr) 252px;
+        }
+        .titlebar {
+          grid-template-columns: 76px 1fr auto;
+        }
+        .brand span,
+        .nav-item span,
+        .sidebar-label,
+        .active-tile,
+        .account-copy,
+        .account-row > .icon,
+        .mini-head span {
+          display: none;
+        }
+        .brand {
+          justify-content: center;
+          padding-left: 0;
+        }
+        .sidebar {
+          align-items: stretch;
+          padding-inline: 9px;
+        }
+        .nav-item {
+          justify-content: center;
+          padding: 0;
+        }
+        .mini-timer {
+          margin-top: 17px;
+        }
+        .mini-content {
+          padding: 9px 6px;
+        }
+        .mini-row {
+          justify-content: center;
+        }
+        .mini-row .status-dot,
+        .mini-project,
+        .mini-time,
+        .mini-actions .icon-button {
+          display: none;
+        }
+        .mini-actions {
+          grid-template-columns: 1fr;
+          margin-top: 0;
+        }
+        .account {
+          padding: 7px;
+        }
+        .account-row {
+          justify-content: center;
+        }
+        .completion-grid {
+          grid-template-columns: 150px 110px 125px minmax(150px, 1fr) auto;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          transition-duration: 0.01ms !important;
+          animation-duration: 0.01ms !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to dashboard content</a>
+
+    <svg
+      width="0"
+      height="0"
+      aria-hidden="true"
+      focusable="false"
+      style="position: absolute"
+    >
+      <symbol id="i-clock" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7v5l3 2" />
+      </symbol>
+      <symbol id="i-home" viewBox="0 0 24 24">
+        <path d="m3 10 9-7 9 7v10H3z" />
+        <path d="M9 20v-6h6v6" />
+      </symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24">
+        <path d="M3 7h7l2 2h9v10H3z" />
+        <path d="M3 7V5h7l2 2" />
+      </symbol>
+      <symbol id="i-history" viewBox="0 0 24 24">
+        <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+        <path d="M3 4v4h4M12 7v5l3 2" />
+      </symbol>
+      <symbol id="i-chart" viewBox="0 0 24 24">
+        <path d="M4 20V10M9 20V4M14 20v-7M19 20V7M2 20h20" />
+      </symbol>
+      <symbol id="i-user" viewBox="0 0 24 24">
+        <circle cx="12" cy="8" r="4" />
+        <path d="M4 21a8 8 0 0 1 16 0" />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="3" />
+        <path
+          d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21h-4v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3v-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.5V3h4v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1h.1v4h-.1a1.7 1.7 0 0 0-1.5 1z"
+        />
+      </symbol>
+      <symbol id="i-calendar" viewBox="0 0 24 24">
+        <rect x="3" y="5" width="18" height="16" rx="2" />
+        <path d="M16 3v4M8 3v4M3 10h18" />
+      </symbol>
+      <symbol id="i-target" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="8" />
+        <circle cx="12" cy="12" r="3" />
+        <path d="m14 10 7-7M17 3h4v4" />
+      </symbol>
+      <symbol id="i-dollar" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9" />
+        <path
+          d="M15 8.5c-.7-.7-1.7-1-3-1-1.7 0-3 .9-3 2s1.1 1.8 3 2.2 3 1 3 2.3-1.3 2.5-3 2.5c-1.3 0-2.5-.4-3.2-1.2M12 5.5v13"
+        />
+      </symbol>
+      <symbol id="i-trend" viewBox="0 0 24 24">
+        <path d="m3 18 6-6 4 4 8-10" />
+        <path d="M16 6h5v5" />
+      </symbol>
+      <symbol id="i-external" viewBox="0 0 24 24">
+        <path d="M14 4h6v6M20 4l-9 9" />
+        <path d="M19 13v7H4V5h7" />
+      </symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24">
+        <path d="M9 6v12M15 6v12" />
+      </symbol>
+      <symbol id="i-square" viewBox="0 0 24 24">
+        <rect x="7" y="7" width="10" height="10" />
+      </symbol>
+      <symbol id="i-play" viewBox="0 0 24 24">
+        <path d="m9 7 8 5-8 5z" />
+      </symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24">
+        <path d="m8 10 4 4 4-4" />
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24">
+        <path d="m5 12 4 4L19 6" />
+      </symbol>
+      <symbol id="i-cloud" viewBox="0 0 24 24">
+        <path
+          d="M7 18h10a4 4 0 0 0 .5-8 6 6 0 0 0-11.4-1.4A4.7 4.7 0 0 0 7 18z"
+        />
+        <path d="m9 13 2 2 4-4" />
+      </symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="4" />
+        <path
+          d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"
+        />
+      </symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24">
+        <path d="M20 15a8 8 0 0 1-11-11 8 8 0 1 0 11 11z" />
+      </symbol>
+    </svg>
+
+    <div class="app">
+      <header class="titlebar" aria-label="Window title bar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"
+            ><svg class="icon"><use href="#i-clock" /></svg
+          ></span>
+          <span>TimeFarm</span>
+        </div>
+        <div class="titlebar-center">Dashboard · Local workspace</div>
+        <div class="window-controls" aria-label="Window controls">
+          <button class="window-control" aria-label="Minimize">
+            <span aria-hidden="true">—</span>
+          </button>
+          <button class="window-control" aria-label="Maximize">
+            <span aria-hidden="true">□</span>
+          </button>
+          <button class="window-control close" aria-label="Close">
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
+      </header>
+
+      <div class="body-grid">
+        <aside class="sidebar" aria-label="Primary navigation">
+          <nav class="nav">
+            <a class="nav-item" href="#main-content" aria-current="page"
+              ><svg class="icon"><use href="#i-home" /></svg
+              ><span>Dashboard</span></a
+            >
+            <a class="nav-item" href="#"
+              ><svg class="icon"><use href="#i-folder" /></svg
+              ><span>Projects</span></a
+            >
+            <a class="nav-item" href="#"
+              ><svg class="icon"><use href="#i-history" /></svg
+              ><span>History</span></a
+            >
+            <a class="nav-item" href="#"
+              ><svg class="icon"><use href="#i-chart" /></svg
+              ><span>Analytics</span></a
+            >
+            <div class="nav-rule" aria-hidden="true"></div>
+            <a class="nav-item" href="#"
+              ><svg class="icon"><use href="#i-user" /></svg
+              ><span>Profile</span></a
+            >
+            <a class="nav-item" href="#"
+              ><svg class="icon"><use href="#i-settings" /></svg
+              ><span>Settings</span></a
+            >
+          </nav>
+
+          <div class="sidebar-label">Active session</div>
+          <section class="active-tile" aria-label="Active session summary">
+            <div class="project-line">
+              <span class="status-dot" aria-hidden="true"></span>
+              <strong>Northstar Website</strong>
+              <button class="ellipsis" aria-label="More session actions">
+                ···
+              </button>
+            </div>
+            <div class="task-label">Design</div>
+            <div
+              class="side-timer"
+              aria-label="Elapsed time 2 hours 18 minutes 42 seconds"
+            >
+              02:18:42
+            </div>
+            <div class="side-actions">
+              <button class="button">
+                <svg class="icon icon-sm"><use href="#i-pause" /></svg>Pause
+              </button>
+              <button class="button danger" data-open-completion>
+                <svg class="icon icon-sm"><use href="#i-square" /></svg>End
+                session
+              </button>
+            </div>
+          </section>
+
+          <section class="mini-timer" aria-label="Compact mini timer specimen">
+            <div class="mini-head">
+              <span>Mini timer · interactive</span
+              ><svg class="icon icon-sm"><use href="#i-chevron" /></svg>
+            </div>
+            <div class="mini-content">
+              <div class="mini-row">
+                <span class="status-dot" aria-hidden="true"></span>
+                <span class="mini-project">Northstar Website</span>
+                <span class="mini-time">02:18:42</span>
+              </div>
+              <div class="mini-actions">
+                <button class="button compact">
+                  <svg class="icon icon-sm"><use href="#i-pause" /></svg
+                  ><span class="mini-project">Pause</span>
+                </button>
+                <button
+                  class="button icon-button"
+                  aria-label="Open mini timer window"
+                >
+                  <svg class="icon icon-sm"><use href="#i-external" /></svg>
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <div class="account">
+            <div class="account-row">
+              <img
+                src="../../assets/timefarm-avatar.png"
+                alt="TimeFarm cat mascot"
+              />
+              <div class="account-copy">
+                <strong>TimeFarm</strong><span>Pro plan</span>
+              </div>
+              <svg class="icon icon-sm" style="margin-left: auto">
+                <use href="#i-chevron" />
+              </svg>
+            </div>
+          </div>
+        </aside>
+
+        <main class="workspace" id="main-content" tabindex="-1">
+          <div class="workspace-scroll">
+            <div class="page-head">
+              <h1 class="page-title">Today</h1>
+              <div class="date-label">
+                <span>May 20, 2025</span
+                ><svg class="icon icon-sm"><use href="#i-calendar" /></svg>
+              </div>
+              <span class="illustrative">Illustrative design data</span>
+              <div class="range-controls" aria-label="Timeline range">
+                <div class="segmented" role="group" aria-label="View range">
+                  <button class="active" aria-pressed="true">Day</button>
+                  <button aria-pressed="false">Week</button>
+                </div>
+                <button class="button icon-button" aria-label="Previous day">
+                  ‹
+                </button>
+                <button class="button icon-button" aria-label="Next day">
+                  ›
+                </button>
+                <button class="button compact">Today</button>
+              </div>
+            </div>
+
+            <section class="timeline" aria-labelledby="timeline-title">
+              <h2 id="timeline-title" class="live-region">
+                Horizontal day timeline
+              </h2>
+              <div class="time-labels" aria-hidden="true">
+                <span>12 AM</span><span>3 AM</span><span>6 AM</span
+                ><span>9 AM</span><span>12 PM</span><span>3 PM</span
+                ><span>6 PM</span><span>9 PM</span><span>12 AM</span>
+              </div>
+              <div
+                class="rail-wrap"
+                role="img"
+                aria-label="Day timeline: Northstar Website 2 hours 18 minutes, Client Meeting 1 hour, Admin 32 minutes, total work 4 hours 18 minutes. Current time 11:32 AM."
+              >
+                <div class="ticks" aria-hidden="true"></div>
+                <div class="timeline-rail" aria-hidden="true">
+                  <span
+                    class="segment focus"
+                    style="left: 18.3%; width: 15.5%"
+                  ></span>
+                  <span
+                    class="segment focus"
+                    style="left: 34.1%; width: 11.8%"
+                  ></span>
+                  <span
+                    class="segment open"
+                    style="left: 46.2%; width: 7.7%"
+                  ></span>
+                  <span
+                    class="segment client"
+                    style="left: 54.1%; width: 10.4%"
+                  ></span>
+                  <span
+                    class="segment admin"
+                    style="left: 64.7%; width: 3.3%"
+                  ></span>
+                  <span
+                    class="segment focus"
+                    style="left: 68.2%; width: 13.6%"
+                  ></span>
+                </div>
+                <span class="now-marker" aria-hidden="true"></span>
+              </div>
+              <div class="timeline-legend">
+                <span class="legend-item"
+                  ><span class="legend-swatch focus"></span>Northstar Website
+                  <span class="mono">2:18</span></span
+                >
+                <span class="legend-item"
+                  ><span class="legend-swatch client"></span>Client Meeting
+                  <span class="mono">1:00</span></span
+                >
+                <span class="legend-item"
+                  ><span class="legend-swatch admin"></span>Admin
+                  <span class="mono">0:32</span></span
+                >
+                <span class="legend-item"
+                  ><span class="legend-swatch"></span>Idle</span
+                >
+                <span class="timeline-total"
+                  >Total&nbsp; <strong class="mono">4:18</strong></span
+                >
+              </div>
+            </section>
+
+            <section class="pulse-band" aria-label="Today's metrics">
+              <div class="pulse-item">
+                <svg class="icon icon-lg pulse-icon">
+                  <use href="#i-clock" />
+                </svg>
+                <div class="pulse-copy">
+                  <span>Work time</span><strong class="mono">4:18</strong>
+                  <small>h</small><span>of 8:00 h</span>
+                </div>
+              </div>
+              <div class="pulse-item">
+                <svg class="icon icon-lg pulse-icon">
+                  <use href="#i-dollar" />
+                </svg>
+                <div class="pulse-copy">
+                  <span>Earnings</span><strong class="mono">$258.00</strong
+                  ><span>of $480.00</span>
+                </div>
+              </div>
+              <div class="pulse-item">
+                <svg class="icon icon-lg pulse-icon">
+                  <use href="#i-trend" />
+                </svg>
+                <div class="pulse-copy">
+                  <span>Effective rate</span><strong class="mono">68%</strong
+                  ><span>of 75%</span>
+                </div>
+              </div>
+              <div class="pulse-item">
+                <svg class="icon icon-lg pulse-icon">
+                  <use href="#i-calendar" />
+                </svg>
+                <div class="pulse-copy">
+                  <span>Sessions</span><strong class="mono">3</strong
+                  ><span>of 5 planned</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="goal-row" aria-label="Daily earnings goal">
+              <div class="goal-name">
+                <svg class="icon icon-lg" style="color: var(--ink-faint)">
+                  <use href="#i-target" /></svg
+                ><span>Daily earnings goal</span>
+              </div>
+              <div
+                class="progress"
+                role="progressbar"
+                aria-valuenow="54"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-label="Daily earnings goal 54 percent"
+              >
+                <span></span>
+              </div>
+              <span class="goal-value mono">$258.00 / $480.00</span>
+              <strong class="goal-percent mono">54%</strong>
+              <button class="button compact">Edit goal</button>
+            </section>
+
+            <div class="lower-grid">
+              <section class="trend-panel" aria-labelledby="trend-title">
+                <div class="section-head">
+                  <h2 id="trend-title">Earnings trend · 7 days</h2>
+                  <span>USD</span>
+                </div>
+                <svg
+                  class="trend-chart"
+                  viewBox="0 0 410 190"
+                  role="img"
+                  aria-labelledby="trend-svg-title trend-svg-desc"
+                >
+                  <title id="trend-svg-title">Seven day earnings trend</title>
+                  <desc id="trend-svg-desc">
+                    Earnings were 180, 245, 310, 190, 275, 365, and 258 US
+                    dollars from May 14 to May 20.
+                  </desc>
+                  <line class="chart-rule" x1="37" y1="18" x2="397" y2="18" />
+                  <line class="chart-rule" x1="37" y1="62" x2="397" y2="62" />
+                  <line class="chart-rule" x1="37" y1="106" x2="397" y2="106" />
+                  <line class="chart-rule" x1="37" y1="150" x2="397" y2="150" />
+                  <text class="chart-label" x="2" y="22">$420</text>
+                  <text class="chart-label" x="2" y="66">$280</text>
+                  <text class="chart-label" x="2" y="110">$140</text>
+                  <text class="chart-label" x="20" y="154">$0</text>
+                  <path
+                    class="trend-area"
+                    d="M55 94 L110 72 L165 46 L220 91 L275 64 L330 28 L385 67 L385 150 L55 150 Z"
+                  />
+                  <path
+                    class="trend-line"
+                    d="M55 94 L110 72 L165 46 L220 91 L275 64 L330 28 L385 67"
+                  />
+                  <g>
+                    <circle class="trend-dot" cx="55" cy="94" r="4" />
+                    <circle class="trend-dot" cx="110" cy="72" r="4" />
+                    <circle class="trend-dot" cx="165" cy="46" r="4" />
+                    <circle class="trend-dot" cx="220" cy="91" r="4" />
+                    <circle class="trend-dot" cx="275" cy="64" r="4" />
+                    <circle class="trend-dot" cx="330" cy="28" r="4" />
+                    <circle class="trend-dot" cx="385" cy="67" r="4" />
+                  </g>
+                  <g class="chart-value">
+                    <text x="43" y="84">$180</text>
+                    <text x="98" y="62">$245</text>
+                    <text x="153" y="36">$310</text>
+                    <text x="208" y="81">$190</text>
+                    <text x="263" y="54">$275</text>
+                    <text x="318" y="18">$365</text>
+                    <text x="373" y="57">$258</text>
+                  </g>
+                  <g class="chart-label">
+                    <text x="42" y="174">May 14</text>
+                    <text x="97" y="174">May 15</text>
+                    <text x="152" y="174">May 16</text>
+                    <text x="207" y="174">May 17</text>
+                    <text x="262" y="174">May 18</text>
+                    <text x="317" y="174">May 19</text>
+                    <text x="372" y="174">May 20</text>
+                  </g>
+                </svg>
+                <a class="text-link" href="#"
+                  >View analytics
+                  <svg class="icon icon-sm"><use href="#i-external" /></svg
+                ></a>
+              </section>
+
+              <section class="recent-panel" aria-labelledby="recent-title">
+                <div class="section-head">
+                  <h2 id="recent-title">Recent sessions</h2>
+                  <span>Latest first</span>
+                </div>
+                <div role="table" aria-label="Recent sessions">
+                  <div class="table-head" role="row">
+                    <span role="columnheader">Project / task</span
+                    ><span role="columnheader">Duration</span
+                    ><span role="columnheader">Earnings</span
+                    ><span role="columnheader">Actions</span>
+                  </div>
+                  <div class="session-row" role="row">
+                    <div class="session-project" role="cell">
+                      <strong
+                        ><span class="project-dot"></span>Northstar
+                        Website</strong
+                      ><span>Design</span>
+                    </div>
+                    <span class="mono" role="cell">02:18:42</span
+                    ><span class="mono" role="cell">$131.20</span>
+                    <div class="row-actions" role="cell">
+                      <button aria-label="Continue Northstar Website">
+                        <svg class="icon icon-sm">
+                          <use href="#i-play" />
+                        </svg></button
+                      ><button aria-label="More actions for Northstar Website">
+                        ···
+                      </button>
+                    </div>
+                  </div>
+                  <div class="session-row" role="row">
+                    <div class="session-project" role="cell">
+                      <strong
+                        ><span class="project-dot blue"></span>Client
+                        Meeting</strong
+                      ><span>Discovery call</span>
+                    </div>
+                    <span class="mono" role="cell">01:00:15</span
+                    ><span class="mono" role="cell">$60.00</span>
+                    <div class="row-actions" role="cell">
+                      <button aria-label="Continue Client Meeting">
+                        <svg class="icon icon-sm">
+                          <use href="#i-play" />
+                        </svg></button
+                      ><button aria-label="More actions for Client Meeting">
+                        ···
+                      </button>
+                    </div>
+                  </div>
+                  <div class="session-row" role="row">
+                    <div class="session-project" role="cell">
+                      <strong
+                        ><span class="project-dot hatch"></span>Admin</strong
+                      ><span>Invoicing</span>
+                    </div>
+                    <span class="mono" role="cell">00:32:11</span
+                    ><span class="mono" role="cell">$16.80</span>
+                    <div class="row-actions" role="cell">
+                      <button aria-label="Continue Admin">
+                        <svg class="icon icon-sm">
+                          <use href="#i-play" />
+                        </svg></button
+                      ><button aria-label="More actions for Admin">···</button>
+                    </div>
+                  </div>
+                </div>
+                <a class="text-link" href="#"
+                  >View history
+                  <svg class="icon icon-sm"><use href="#i-external" /></svg
+                ></a>
+              </section>
+            </div>
+          </div>
+
+          <section
+            class="completion-specimen"
+            id="completion"
+            role="dialog"
+            aria-labelledby="completion-title"
+            aria-describedby="completion-desc"
+          >
+            <form class="completion-grid" id="completion-form">
+              <div class="completion-title">
+                <strong id="completion-title">Complete session</strong>
+                <span id="completion-desc"
+                  >Specimen · earnings are required and never assumed.</span
+                >
+              </div>
+              <div class="field">
+                <label for="earnings"
+                  >Earnings
+                  <span class="required" aria-hidden="true">*</span></label
+                >
+                <input
+                  id="earnings"
+                  name="earnings"
+                  inputmode="decimal"
+                  value="131.20"
+                  required
+                  aria-required="true"
+                />
+              </div>
+              <div class="field">
+                <label for="currency"
+                  >Currency
+                  <span class="required" aria-hidden="true">*</span></label
+                >
+                <select
+                  id="currency"
+                  name="currency"
+                  required
+                  aria-required="true"
+                >
+                  <option>USD — US Dollar</option>
+                  <option>VND — Vietnamese Dong</option>
+                  <option>EUR — Euro</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="completion-note">Note · optional</label>
+                <input
+                  id="completion-note"
+                  name="note"
+                  value="Homepage layout and hero section"
+                />
+              </div>
+              <div class="completion-actions">
+                <button class="button" type="button" data-close-completion>
+                  Cancel
+                </button>
+                <button class="button primary" type="submit">
+                  <svg class="icon icon-sm"><use href="#i-check" /></svg
+                  >Complete
+                </button>
+              </div>
+            </form>
+          </section>
+        </main>
+
+        <aside class="session-inspector" aria-label="Current session inspector">
+          <div class="inspector-head">
+            <span>Current session</span>
+            <button
+              class="theme-toggle"
+              id="theme-toggle"
+              aria-label="Switch to dark theme"
+              title="Toggle light or dark theme"
+            >
+              <svg class="icon icon-sm">
+                <use id="theme-icon" href="#i-moon" />
+              </svg>
+            </button>
+          </div>
+
+          <div class="inspector-project">
+            <div class="project-line">
+              <span class="status-dot" aria-hidden="true"></span
+              ><strong>Northstar Website</strong
+              ><button
+                class="ellipsis"
+                aria-label="More current session actions"
+              >
+                ···
+              </button>
+            </div>
+            <div class="task-label">Design</div>
+          </div>
+
+          <div
+            class="inspector-time"
+            aria-label="Elapsed time 2 hours 18 minutes 42 seconds"
+          >
+            02:18:42
+          </div>
+          <div class="running-label">
+            <span class="running-pulse" aria-hidden="true"></span>Running ·
+            saved locally
+          </div>
+
+          <dl class="inspector-facts">
+            <div>
+              <dt>Started</dt>
+              <dd class="mono">9:13 AM</dd>
+            </div>
+            <div>
+              <dt>Earnings</dt>
+              <dd class="mono">$131.20</dd>
+            </div>
+            <div>
+              <dt>Rate</dt>
+              <dd class="mono">$60.00 / h</dd>
+            </div>
+          </dl>
+
+          <section class="inspector-section" aria-labelledby="budget-title">
+            <h3 id="budget-title">Project budget</h3>
+            <div
+              class="progress"
+              role="progressbar"
+              aria-valuenow="47"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-label="Project budget 47 percent used"
+            >
+              <span style="width: 47%"></span>
+            </div>
+            <div class="budget-row">
+              <span class="mono">$2,340 / $5,000</span
+              ><span class="mono">47%</span>
+            </div>
+          </section>
+
+          <section class="inspector-section" aria-labelledby="notes-title">
+            <h3 id="notes-title">Session note</h3>
+            <textarea
+              class="note-box"
+              aria-label="Session note"
+              placeholder="Add a short note…"
+            ></textarea>
+            <div
+              style="
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-top: 6px;
+              "
+            >
+              <span style="font-size: 11px; color: var(--ink-faint)"
+                >0 / 500</span
+              ><button class="button compact" disabled>Save</button>
+            </div>
+          </section>
+
+          <section class="inspector-section" aria-labelledby="tags-title">
+            <h3 id="tags-title">Tags</h3>
+            <div class="tag-row">
+              <span class="tag">design</span><span class="tag">website</span>
+            </div>
+          </section>
+
+          <div class="sync-status">
+            <svg class="icon icon-sm"><use href="#i-cloud" /></svg
+            ><span>All local changes saved · Cloud clear</span>
+          </div>
+          <div class="inspector-actions">
+            <button class="button">
+              <svg class="icon icon-sm"><use href="#i-pause" /></svg>Pause
+            </button>
+            <button class="button danger" data-open-completion>
+              <svg class="icon icon-sm"><use href="#i-square" /></svg>End
+            </button>
+          </div>
+        </aside>
+      </div>
+    </div>
+
+    <div
+      class="live-region"
+      id="live-region"
+      role="status"
+      aria-live="polite"
+    ></div>
+
+    <script>
+      const root = document.documentElement;
+      const themeToggle = document.getElementById("theme-toggle");
+      const themeIcon = document.getElementById("theme-icon");
+      const completion = document.getElementById("completion");
+      const liveRegion = document.getElementById("live-region");
+
+      themeToggle.addEventListener("click", () => {
+        const dark = root.dataset.theme !== "dark";
+        root.dataset.theme = dark ? "dark" : "light";
+        themeIcon.setAttribute("href", dark ? "#i-sun" : "#i-moon");
+        themeToggle.setAttribute(
+          "aria-label",
+          dark ? "Switch to light theme" : "Switch to dark theme",
+        );
+        liveRegion.textContent = dark
+          ? "Dark theme enabled"
+          : "Light theme enabled";
+      });
+
+      document.querySelectorAll("[data-open-completion]").forEach((button) => {
+        button.addEventListener("click", () => {
+          completion.hidden = false;
+          document.getElementById("earnings").focus();
+          liveRegion.textContent = "Completion form opened";
+        });
+      });
+
+      document
+        .querySelector("[data-close-completion]")
+        .addEventListener("click", () => {
+          completion.hidden = true;
+          liveRegion.textContent = "Completion form closed";
+        });
+
+      document
+        .getElementById("completion-form")
+        .addEventListener("submit", (event) => {
+          event.preventDefault();
+          const button = event.submitter;
+          button.disabled = true;
+          button.textContent = "Saving locally…";
+          liveRegion.textContent = "Saving completed session locally";
+          setTimeout(() => {
+            button.disabled = false;
+            button.innerHTML =
+              '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-check"></use></svg>Complete';
+            liveRegion.textContent =
+              "Design specimen only. No session data was changed.";
+          }, 700);
+        });
+
+      document.querySelectorAll(".segmented button").forEach((button) => {
+        button.addEventListener("click", () => {
+          button.parentElement.querySelectorAll("button").forEach((item) => {
+            const active = item === button;
+            item.classList.toggle("active", active);
+            item.setAttribute("aria-pressed", String(active));
+          });
+        });
+      });
+    </script>
+  </body>
+</html>

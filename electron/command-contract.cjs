@@ -1,4 +1,5 @@
 const { z } = require("zod");
+const { goalTargetIssue } = require("./goal-validation.cjs");
 
 // Commands cross the renderer/main-process boundary.  They deliberately model
 // user intent rather than a mutable AppState snapshot.  This makes it possible
@@ -68,11 +69,18 @@ const MoneySchema = z
     currency: CurrencySchema,
   })
   .strict();
-const OptionalTextSchema = z.string().trim().max(5000);
-const ProjectNameSchema = z.string().trim().min(1).max(160);
-const ColorSchema = z.string().trim().min(1).max(64);
-const IconSchema = z.string().trim().min(1).max(32);
-const DisplayNameSchema = z.string().trim().min(1).max(100);
+function boundedText(maximum, { required = true } = {}) {
+  let schema = z.string().trim();
+  if (required) schema = schema.min(1);
+  return schema.refine((value) => Array.from(value).length <= maximum, {
+    message: `Text cannot exceed ${maximum} Unicode characters.`,
+  });
+}
+const OptionalTextSchema = boundedText(5000, { required: false });
+const ProjectNameSchema = boundedText(160);
+const ColorSchema = boundedText(64);
+const IconSchema = boundedText(32);
+const DisplayNameSchema = boundedText(100);
 const CountrySchema = z
   .string()
   .trim()
@@ -270,7 +278,16 @@ const CommandSchema = z.discriminatedUnion("type", [
         kind: z.enum(GOAL_KINDS),
         target: z.number().finite().positive().max(Number.MAX_SAFE_INTEGER),
       })
-      .strict(),
+      .strict()
+      .superRefine((value, context) => {
+        const issue = goalTargetIssue(value.kind, value.target);
+        if (issue)
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["target"],
+            message: issue,
+          });
+      }),
   ),
   command(
     "goal.update",
@@ -292,6 +309,15 @@ const CommandSchema = z.discriminatedUnion("type", [
             code: z.ZodIssueCode.custom,
             message: "At least one goal field must be supplied.",
           });
+        if (value.kind !== undefined && value.target !== undefined) {
+          const issue = goalTargetIssue(value.kind, value.target);
+          if (issue)
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["target"],
+              message: issue,
+            });
+        }
       }),
   ),
   command("goal.delete", z.object({ goalId: IdentifierSchema }).strict()),

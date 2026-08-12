@@ -23,14 +23,16 @@ function withTemporaryDirectories(run) {
   }
 }
 
-test("exports only the SQLite recovery set without credentials or unrelated files", () =>
+test("exports database and legacy recovery sources without credentials or unrelated files", () =>
   withTemporaryDirectories(({ userDataPath, parentDirectory }) => {
     const expected = [
       "workly.db",
       "workly.db-shm",
       "workly.db-wal",
       "workly.db.pre-v2.backup",
-    ];
+      "workly-state.json.migrating",
+      "workly-state.json.skipped-2026-08-12T01-02-03-000Z",
+    ].sort((left, right) => left.localeCompare(right));
     for (const name of expected)
       fs.writeFileSync(path.join(userDataPath, name), `content:${name}`);
     fs.writeFileSync(path.join(userDataPath, "auth-session.bin"), "secret");
@@ -54,11 +56,24 @@ test("exports only the SQLite recovery set without credentials or unrelated file
     assert.deepEqual(result.files, expected);
     assert.deepEqual(
       fs.readdirSync(result.destination).sort(),
-      [...expected, "RECOVERY.txt"].sort(),
+      [...expected, "RECOVERY-MANIFEST.json", "RECOVERY.txt"].sort(),
     );
     assert.equal(
       fs.existsSync(path.join(result.destination, "auth-session.bin")),
       false,
+    );
+    const manifest = JSON.parse(
+      fs.readFileSync(
+        path.join(result.destination, "RECOVERY-MANIFEST.json"),
+        "utf8",
+      ),
+    );
+    assert.deepEqual(
+      manifest.files.map((file) => file.file),
+      expected,
+    );
+    assert.ok(
+      manifest.files.every((file) => /^[a-f0-9]{64}$/.test(file.sha256)),
     );
   }));
 
@@ -66,7 +81,7 @@ test("fails closed when there is no recoverable database", () =>
   withTemporaryDirectories(({ userDataPath, parentDirectory }) => {
     assert.throws(
       () => exportRecoveryCopy({ userDataPath, parentDirectory }),
-      /No TimeFarm database or migration backup/,
+      /No recoverable TimeFarm local data/,
     );
     assert.deepEqual(fs.readdirSync(parentDirectory), []);
   }));

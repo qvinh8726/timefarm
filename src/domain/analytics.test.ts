@@ -5,6 +5,7 @@ import {
   dailySeries,
   effectiveHourlyMinor,
   goalCurrentValue,
+  liveRangeSummary,
   projectBreakdown,
   rangeDailySeries,
   rangeSummary,
@@ -57,6 +58,77 @@ describe("earnings analytics", () => {
       earningActiveMs: 3_600_000,
       earningsMinor: 2_500,
     });
+  });
+
+  it("conserves minor units across daily buckets with a deterministic tie-break", () => {
+    const oneCentAcrossMidnight: WorkSession = {
+      ...sessions[0],
+      id: "one-cent-across-midnight",
+      startedAt: "2026-08-01T23:00:00.000Z",
+      endedAt: "2026-08-02T01:00:00.000Z",
+      activeDurationMs: 7_200_000,
+      earnings: { amountMinor: 1, currency: "USD" },
+    };
+    const range = {
+      startMs: Date.parse("2026-08-01T00:00:00.000Z"),
+      endMs: Date.parse("2026-08-03T00:00:00.000Z"),
+      timezone: "UTC",
+    };
+
+    const points = rangeDailySeries([oneCentAcrossMidnight], "USD", range);
+    expect(points.map((point) => point.earningsMinor)).toEqual([1, 0]);
+    expect(
+      points.reduce((total, point) => total + point.earningsMinor, 0),
+    ).toBe(rangeSummary([oneCentAcrossMidnight], "USD", range).earningsMinor);
+  });
+
+  it("preserves the range total for clipped multi-day sessions and every minor amount", () => {
+    const range = {
+      startMs: Date.parse("2026-08-02T06:00:00.000Z"),
+      endMs: Date.parse("2026-08-05T18:00:00.000Z"),
+      timezone: "UTC",
+    };
+
+    for (let amountMinor = 0; amountMinor <= 101; amountMinor += 1) {
+      const session: WorkSession = {
+        ...sessions[0],
+        id: `conservation-${amountMinor}`,
+        startedAt: "2026-08-01T12:00:00.000Z",
+        endedAt: "2026-08-06T12:00:00.000Z",
+        activeDurationMs: 432_000_000,
+        earnings: { amountMinor, currency: "USD" },
+      };
+      const dailyTotal = rangeDailySeries([session], "USD", range).reduce(
+        (total, point) => total + point.earningsMinor,
+        0,
+      );
+      expect(dailyTotal, `amountMinor=${amountMinor}`).toBe(
+        rangeSummary([session], "USD", range).earningsMinor,
+      );
+    }
+  });
+
+  it("allocates the largest supported minor-unit amount without unsafe multiplication", () => {
+    const session: WorkSession = {
+      ...sessions[0],
+      id: "max-safe-money",
+      startedAt: "2026-08-01T23:00:00.000Z",
+      endedAt: "2026-08-02T01:00:00.000Z",
+      activeDurationMs: 7_200_000,
+      earnings: { amountMinor: Number.MAX_SAFE_INTEGER, currency: "USD" },
+    };
+    const range = {
+      startMs: Date.parse("2026-08-01T00:00:00.000Z"),
+      endMs: Date.parse("2026-08-03T00:00:00.000Z"),
+      timezone: "UTC",
+    };
+    const total = rangeDailySeries([session], "USD", range).reduce(
+      (sum, point) => sum + point.earningsMinor,
+      0,
+    );
+
+    expect(total).toBe(Number.MAX_SAFE_INTEGER);
+    expect(total).toBe(rangeSummary([session], "USD", range).earningsMinor);
   });
 
   it("creates every requested day rather than capping long ranges to 30 days", () => {
@@ -190,6 +262,55 @@ describe("earnings analytics", () => {
     ).toBe(12_600_000);
   });
 
+  it("unions completed and active time for live KPIs and time goals", () => {
+    const completed: WorkSession = {
+      ...sessions[0],
+      id: "completed-overlap",
+      startedAt: "2026-08-09T08:00:00.000Z",
+      endedAt: "2026-08-09T10:00:00.000Z",
+      activeDurationMs: 7_200_000,
+      earnings: { amountMinor: 2_000, currency: "USD" },
+    };
+    const active: WorkSession = {
+      ...sessions[0],
+      id: "active-overlap",
+      startedAt: "2026-08-09T09:00:00.000Z",
+      endedAt: undefined,
+      activeDurationMs: undefined,
+      status: "running",
+      earnings: undefined,
+    };
+    const now = new Date("2026-08-09T11:00:00.000Z");
+    const range = {
+      startMs: Date.parse("2026-08-09T00:00:00.000Z"),
+      endMs: now.getTime(),
+      timezone: "UTC",
+    };
+    const goal: Goal = {
+      id: "live-hours",
+      kind: "hours_daily",
+      target: 8,
+      createdAt: "2026-08-09T00:00:00.000Z",
+      syncStatus: "local",
+    };
+
+    expect(
+      liveRangeSummary([completed, active], "USD", range, now.getTime()),
+    ).toMatchObject({ activeMs: 10_800_000, earningsMinor: 2_000 });
+    expect(
+      rangeDailySeries(
+        [completed, active],
+        "USD",
+        range,
+        "en",
+        now.getTime(),
+      )[0],
+    ).toMatchObject({ activeMs: 10_800_000, earningsMinor: 2_000 });
+    expect(
+      goalCurrentValue(goal, [completed, active], [], "USD", now, "UTC"),
+    ).toBe(3);
+  });
+
   it("uses a visible current-month cadence and pace for completed-project goals", () => {
     const now = new Date("2026-08-10T12:00:00.000Z");
     const goal: Goal = {
@@ -250,5 +371,52 @@ describe("earnings analytics", () => {
     expect(progress.pacePerHour).not.toBeNull();
     expect(progress.status).toBe("behind");
     expect(progress.projectedCompletionAt).toBeDefined();
+  });
+
+  it("starts an empty goal on track instead of ahead", () => {
+    const goal: Goal = {
+      id: "goal-at-boundary",
+      kind: "hours_daily",
+      target: 4,
+      createdAt: "2026-08-10T00:00:00.000Z",
+      syncStatus: "local",
+    };
+    const progress = calculateGoalProgress(
+      goal,
+      [],
+      [],
+      "USD",
+      new Date("2026-08-10T00:00:00.000Z"),
+      "UTC",
+    );
+
+    expect(progress.status).toBe("on_track");
+    expect(progress.percentage).toBe(0);
+  });
+
+  it("defensively contains an invalid target and an overflowing projection", () => {
+    const invalid: Goal = {
+      id: "invalid-goal",
+      kind: "hours_daily",
+      target: 0,
+      createdAt: "2026-08-10T00:00:00.000Z",
+      syncStatus: "local",
+    };
+    expect(
+      calculateGoalProgress(
+        invalid,
+        [],
+        [],
+        "USD",
+        new Date("2026-08-10T12:00:00.000Z"),
+        "UTC",
+      ),
+    ).toMatchObject({
+      target: 0,
+      percentage: 0,
+      remaining: 0,
+      status: "behind",
+      projectedCompletionAt: undefined,
+    });
   });
 });

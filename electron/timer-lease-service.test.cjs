@@ -10,6 +10,7 @@ const {
   TimerLeaseService,
   isUuid,
 } = require("./timer-lease-service.cjs");
+const { createCoalescedSyncExecutor } = require("./sync-service.cjs");
 
 const START = "2026-08-10T00:00:00.000Z";
 
@@ -372,11 +373,11 @@ test("supports a configured 60-second lease and stops local renewal without faki
     );
   }));
 
-test("routes background lease renewal through the injected serialization executor", async () =>
+test("runs background lease renewal independently of unrelated slow work", async () =>
   withDirectory(async (directory) => {
     let scheduled = () => {};
     let rpcCalls = 0;
-    let executorCalls = 0;
+    const slowWork = deferred();
     const service = createService(directory, {
       scheduler: {
         setInterval: (callback) => {
@@ -384,10 +385,6 @@ test("routes background lease renewal through the injected serialization executo
           return { unref: () => {} };
         },
         clearInterval: () => {},
-      },
-      renewExecutor: async (work) => {
-        executorCalls += 1;
-        return work();
       },
       authService: authService({
         rpc: async () => {
@@ -399,12 +396,16 @@ test("routes background lease renewal through the injected serialization executo
 
     await service.acquire("11111111-1111-4111-8111-111111111111");
     service.startRenewal();
+    const runSync = createCoalescedSyncExecutor();
+    const slowSync = runSync(() => slowWork.promise);
+    await Promise.resolve();
     scheduled();
     await new Promise((resolve) => setImmediate(resolve));
 
-    assert.equal(executorCalls, 1);
     assert.equal(rpcCalls, 2);
     assert.equal(service.getStatus().held, true);
+    slowWork.resolve();
+    await slowSync;
   }));
 
 test("rejects unsafe configuration and non-UUID device identifiers", () =>

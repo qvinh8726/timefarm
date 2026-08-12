@@ -9,6 +9,7 @@ const {
   activeDurationAt,
   buildTimerSnapshot,
   clampPosition,
+  overlayHtml,
 } = require("./overlay-manager.cjs");
 
 class FakeWebContents extends EventEmitter {
@@ -234,4 +235,51 @@ test("clamps a saved position onto the current display work area", () => {
     x: 0,
     y: 188,
   });
+});
+
+test("embedded controls serialize actions and keep accessible action feedback", () => {
+  const html = overlayHtml();
+  assert.match(html, /id="timer-card"[^>]+aria-busy="false"/);
+  assert.match(html, /id="status"[^>]+aria-live="polite"/);
+  assert.match(html, /id="hint"[^>]+aria-live="polite"/);
+  assert.match(html, /let actionBusy = false/);
+  assert.match(html, /if \(actionBusy\) return/);
+  assert.match(html, /result\.ok !== true/);
+  assert.match(html, /persistent: Boolean\(persistent\)/);
+  assert.match(html, /data-feedback="none"/);
+  assert.match(html, /showFeedback\([^\n]+true, 'pending'\)/);
+  assert.match(html, /showFeedback\([^\n]+true, 'error'\)/);
+  assert.match(
+    html,
+    /elements\.hint\.textContent = actionFeedback\.message \|\| defaultHint\(\)/,
+  );
+});
+
+test("quiet instrument styling keeps view-only passive and reserves lime for start or continue", () => {
+  const html = overlayHtml();
+  assert.match(html, /color-scheme: light dark/);
+  assert.match(html, /@media \(prefers-color-scheme: dark\)/);
+  assert.match(html, /--teal: #0f9889/);
+  assert.match(html, /--lime: #d5ff7d/);
+  assert.match(
+    html,
+    /id="timer-card"[^>]+data-mode="view-only"[^>]+data-state="idle"/,
+  );
+  assert.match(
+    html,
+    /id="actions"[^>]+role="group"[^>]+aria-label="Timer actions" hidden/,
+  );
+  assert.match(html, /elements\.actions\.hidden = !interactive/);
+  assert.match(html, /element\.disabled = actionBusy \|\| !interactive/);
+  assert.match(html, /id="start" class="action action--main action--continue"/);
+  assert.match(
+    html,
+    /id="resume" class="action action--main action--continue"[^>]+aria-label="Continue timer"/,
+  );
+  assert.doesNotMatch(
+    html,
+    /id="(?:pause|stop|open)" class="[^"]*action--continue/,
+  );
+  assert.match(html, /<svg viewBox="0 0 16 16" aria-hidden="true">/);
+  assert.doesNotMatch(html, /<output id="time"/);
 });

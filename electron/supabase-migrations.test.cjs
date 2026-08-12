@@ -22,6 +22,8 @@ test("keeps Supabase migrations contiguous and ordered", () => {
     "0003_atomic_workspace_claim.sql",
     "0004_paginated_bootstrap.sql",
     "0005_optimistic_revisions.sql",
+    "0006_production_hardening.sql",
+    "0007_sync_contract_and_retention.sql",
   ]);
 });
 
@@ -158,4 +160,180 @@ test("enforces optimistic revisions while retaining a private legacy writer", ()
     revision,
     /grant execute on function public\.workly_apply_sync_operation\(uuid, text, uuid, text, jsonb, bigint\) to authenticated/,
   );
+});
+
+test("keeps change-feed reads behind the hardened RPC boundary", () => {
+  const hardening = sql["0006_production_hardening.sql"];
+  assert.match(
+    hardening,
+    /create or replace function public\.workly_pull_changes[\s\S]+security definer[\s\S]+set search_path = ''/,
+  );
+  assert.match(hardening, /v_user_id uuid := auth\.uid\(\)/);
+  assert.match(hardening, /if v_user_id is null then/);
+  assert.match(hardening, /from public\.sync_changes as change/);
+  assert.ok(
+    hardening.includes(
+      "revoke all on table public.sync_changes from public, anon, authenticated",
+    ),
+  );
+  assert.match(
+    hardening,
+    /grant execute on function public\.workly_pull_changes\(bigint, integer\)\s+to authenticated/,
+  );
+});
+
+test("prevents project deletion from erasing session or payment history", () => {
+  const hardening = sql["0006_production_hardening.sql"];
+  assert.ok(hardening.includes("work_sessions_project_id_idx"));
+  assert.ok(hardening.includes("payments_project_id_idx"));
+  assert.equal(hardening.match(/on delete restrict/g)?.length, 2);
+  assert.match(
+    hardening,
+    /constraint work_sessions_project_id_fkey[\s\S]+references public\.projects\(id\)[\s\S]+on delete restrict/,
+  );
+  assert.match(
+    hardening,
+    /constraint payments_project_id_fkey[\s\S]+references public\.projects\(id\)[\s\S]+on delete restrict/,
+  );
+  assert.match(
+    hardening,
+    /p_entity_type = 'project' and p_operation = 'delete'[\s\S]+for update/,
+  );
+  assert.match(
+    hardening,
+    /p_entity_type in \('work_session', 'payment'\)[\s\S]+for key share/,
+  );
+  assert.match(
+    hardening,
+    /workly_apply_sync_operation_unlocked[\s\S]+from public, anon, authenticated/,
+  );
+});
+
+test("retires legacy unbounded and last-write-wins RPC surfaces", () => {
+  const contract = sql["0007_sync_contract_and_retention.sql"];
+  assert.match(
+    contract,
+    /revoke all on function public\.workly_apply_sync_operation\([\s\S]+?jsonb[\s\S]+?\) from public, anon, authenticated;[\s\S]+?drop function public\.workly_apply_sync_operation\(/,
+  );
+  assert.match(
+    contract,
+    /revoke all on function public\.workly_bootstrap_snapshot\(\)[\s\S]+?drop function public\.workly_bootstrap_snapshot\(\)/,
+  );
+  assert.match(
+    contract,
+    /p_expected_revision is null[\s\S]+?expected revision must be a non-negative safe integer/,
+  );
+  assert.match(
+    contract,
+    /workly_apply_sync_operation_cas_unchecked[\s\S]+?from public, anon, authenticated, service_role/,
+  );
+});
+
+test("keeps every bootstrap response bounded, including explicit NULL limits", () => {
+  const contract = sql["0007_sync_contract_and_retention.sql"];
+  assert.match(
+    contract,
+    /create function public\.workly_bootstrap_page\([\s\S]+?if p_limit is null or p_limit < 1 or p_limit > 500 then/,
+  );
+  assert.match(
+    contract,
+    /workly_bootstrap_page_unchecked[\s\S]+?from public, anon, authenticated, service_role/,
+  );
+  assert.match(
+    contract,
+    /grant execute on function public\.workly_bootstrap_page\([\s\S]+?to authenticated/,
+  );
+  assert.match(
+    contract,
+    /v_page := public\.workly_bootstrap_page_unchecked[\s\S]+?jsonb_set\([\s\S]+?v_retention_floor/,
+  );
+});
+
+test("uses an explicit retention watermark instead of silently truncating offline history", () => {
+  const contract = sql["0007_sync_contract_and_retention.sql"];
+  assert.match(contract, /create table public\.sync_change_retention/);
+  assert.match(contract, /retention cutoff must be at least 90 days old/);
+  assert.match(
+    contract,
+    /from public\.sync_change_retention as retention[\s\S]+?for update/,
+  );
+  assert.match(
+    contract,
+    /from public\.sync_change_retention as retention[\s\S]+?for share/,
+  );
+  assert.match(
+    contract,
+    /perform retention\.user_id[\s\S]+?for update;[\s\S]+?return public\.workly_apply_sync_operation_cas_unchecked/,
+  );
+  assert.match(
+    contract,
+    /v_first_retained_cursor[\s\S]+?v_delete_through := least/,
+  );
+  assert.match(
+    contract,
+    /if p_cursor < v_retention_floor then[\s\S]+?change cursor expired; full bootstrap required/,
+  );
+  assert.match(
+    contract,
+    /workly_prune_sync_changes\([\s\S]+?from public, anon, authenticated, service_role;[\s\S]+?grant execute[\s\S]+?to service_role/,
+  );
+  assert.doesNotMatch(contract, /delete from public\.sync_entity_versions/);
+});
+
+test("adds high-value sync indexes and caches auth.uid() in RLS policies", () => {
+  const contract = sql["0007_sync_contract_and_retention.sql"];
+  for (const index of [
+    "work_sessions_user_latest_completed_idx",
+    "work_sessions_user_bootstrap_completed_idx",
+    "sync_changes_entity_latest_idx",
+  ]) {
+    assert.ok(contract.includes(index));
+  }
+  assert.match(
+    contract,
+    /create policy "profiles owned by current user"[\s\S]+?to authenticated[\s\S]+?select auth\.uid\(\)/,
+  );
+  assert.equal(
+    contract.match(/create policy "[^"]+ owned by current user"/g)?.length,
+    9,
+  );
+});
+
+test("aligns cloud payload bounds with safe desktop values", () => {
+  const contract = sql["0007_sync_contract_and_retention.sql"];
+  assert.match(
+    contract,
+    /create function public\.workly_validate_sync_payload/,
+  );
+  assert.match(
+    contract,
+    /create function public\.workly_trim_text[\s\S]+?pg_catalog\.chr\(160\)[\s\S]+?pg_catalog\.chr\(65279\)/,
+  );
+  assert.match(contract, /project name must contain 1 to 160 characters/);
+  assert.match(
+    contract,
+    /profile display name must contain 1 to 100 characters/,
+  );
+  assert.match(contract, /account country must be a two- or three-letter code/);
+  assert.match(contract, /project color must contain 1 to 64 characters/);
+  assert.match(contract, /project icon must contain 1 to 32 characters/);
+  assert.match(
+    contract,
+    /earnings and completed-project goals require whole-unit targets/,
+  );
+  assert.match(
+    contract,
+    /kind in \('hours_daily', 'hours_weekly'\)[\s\S]+?target = trunc\(target\)/,
+  );
+  assert.match(contract, /dashboard hidden widgets are invalid/);
+  assert.ok(contract.includes("9007199254740991"));
+  for (const constraint of [
+    "projects_expected_money_shape_check",
+    "work_sessions_completed_shape_check",
+    "payments_safe_amount_check",
+    "goals_safe_target_check",
+    "sync_changes_payload_object_check",
+  ]) {
+    assert.ok(contract.includes(constraint));
+  }
 });

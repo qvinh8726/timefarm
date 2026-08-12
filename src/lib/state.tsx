@@ -3,10 +3,13 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type PropsWithChildren,
 } from "react";
+import { goalTargetIssue } from "../domain/goals";
 import { activeDurationMs } from "../domain/time";
 import { moneyFromInput } from "../domain/money";
 import {
@@ -58,10 +61,13 @@ export type ActionResult<T extends object = object> =
   | ({ ok: true } & T)
   | { ok: false; message: string };
 
-interface AppStore {
+export interface AppStoreState {
   state: AppState | null;
   isLoading: boolean;
   loadError: string | null;
+}
+
+export interface AppStoreActions {
   reload: () => Promise<AppState | null>;
   initializeAccount: (
     input: Pick<
@@ -128,7 +134,10 @@ interface AppStore {
     language: AppLanguage,
   ) => Promise<ActionResult<{ accountId: string }>>;
   resetLocalData: () => Promise<ActionResult>;
+  rebuildLocalCache: () => Promise<ActionResult>;
 }
+
+export type AppStore = AppStoreState & AppStoreActions;
 
 interface DesktopCommandResponse {
   command: string;
@@ -136,7 +145,8 @@ interface DesktopCommandResponse {
   result: unknown;
 }
 
-const StoreContext = createContext<AppStore | null>(null);
+const StoreStateContext = createContext<AppStoreState | null>(null);
+const StoreActionsContext = createContext<AppStoreActions | null>(null);
 
 function id(): string {
   return crypto.randomUUID();
@@ -185,6 +195,80 @@ function canonicalDesktopResponse(value: unknown): DesktopCommandResponse {
 
 function resultField<T>(result: unknown, key: string): T | undefined {
   return isRecord(result) ? (result[key] as T | undefined) : undefined;
+}
+
+function invalidGoalTarget(
+  kind: GoalKind,
+  target: number,
+): { ok: false; message: string } | null {
+  const issue = goalTargetIssue(kind, target);
+  if (!issue) return null;
+  if (issue === "not_positive")
+    return { ok: false, message: "Goal target must be greater than zero." };
+  if (issue === "project_count_not_integer")
+    return {
+      ok: false,
+      message: "Completed-project goal target must be a whole number.",
+    };
+  if (kind.startsWith("earnings"))
+    return {
+      ok: false,
+      message:
+        "Earnings goal target must be a whole minor-unit amount within the safe numeric range.",
+    };
+  return {
+    ok: false,
+    message: "Goal target exceeds the safe numeric range.",
+  };
+}
+
+function useStableAppStoreActions(latest: AppStoreActions): AppStoreActions {
+  const latestRef = useRef(latest);
+
+  // The public action facade stays referentially stable while every call is
+  // routed to the implementation from the latest committed store render.
+  useLayoutEffect(() => {
+    latestRef.current = latest;
+  }, [latest]);
+
+  return useMemo<AppStoreActions>(
+    () => ({
+      reload: () => latestRef.current.reload(),
+      initializeAccount: (input) => latestRef.current.initializeAccount(input),
+      claimLocalAccount: (authUserId) =>
+        latestRef.current.claimLocalAccount(authUserId),
+      startSession: (projectId) => latestRef.current.startSession(projectId),
+      pauseSession: () => latestRef.current.pauseSession(),
+      resumeSession: () => latestRef.current.resumeSession(),
+      completeSession: (sessionId, input, endedAt) =>
+        latestRef.current.completeSession(sessionId, input, endedAt),
+      discardSession: (sessionId) =>
+        latestRef.current.discardSession(sessionId),
+      editLatestSession: (sessionId, input) =>
+        latestRef.current.editLatestSession(sessionId, input),
+      createProject: (input) => latestRef.current.createProject(input),
+      createProjectAndStartSession: (input) =>
+        latestRef.current.createProjectAndStartSession(input),
+      updateProject: (projectId, input) =>
+        latestRef.current.updateProject(projectId, input),
+      setProjectStatus: (projectId, status) =>
+        latestRef.current.setProjectStatus(projectId, status),
+      recordPayment: (input) => latestRef.current.recordPayment(input),
+      updatePayment: (paymentId, input) =>
+        latestRef.current.updatePayment(paymentId, input),
+      deletePayment: (paymentId) => latestRef.current.deletePayment(paymentId),
+      createGoal: (kind, target) => latestRef.current.createGoal(kind, target),
+      updateGoal: (goalId, kind, target) =>
+        latestRef.current.updateGoal(goalId, kind, target),
+      deleteGoal: (goalId) => latestRef.current.deleteGoal(goalId),
+      updatePreferences: (partial) =>
+        latestRef.current.updatePreferences(partial),
+      updateLanguage: (language) => latestRef.current.updateLanguage(language),
+      resetLocalData: () => latestRef.current.resetLocalData(),
+      rebuildLocalCache: () => latestRef.current.rebuildLocalCache(),
+    }),
+    [],
+  );
 }
 
 export function AppStoreProvider({ children }: PropsWithChildren) {
@@ -939,8 +1023,8 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       kind: GoalKind,
       target: number,
     ): Promise<ActionResult<{ goalId: string }>> => {
-      if (!Number.isFinite(target) || target <= 0)
-        return { ok: false, message: "Goal target must be greater than zero." };
+      const invalidTarget = invalidGoalTarget(kind, target);
+      if (invalidTarget) return invalidTarget;
       const desktop = await executeDesktop<{ goalId: string }>("goal.create", {
         kind,
         target,
@@ -966,8 +1050,8 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       kind: GoalKind,
       target: number,
     ): Promise<ActionResult<{ goalId: string }>> => {
-      if (!Number.isFinite(target) || target <= 0)
-        return { ok: false, message: "Goal target must be greater than zero." };
+      const invalidTarget = invalidGoalTarget(kind, target);
+      if (invalidTarget) return invalidTarget;
       const desktop = await executeDesktop<{ goalId: string }>("goal.update", {
         goalId,
         kind,
@@ -1065,11 +1149,30 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
     return { ok: true };
   }, []);
 
-  const value = useMemo<AppStore>(
+  const rebuildLocalCache = useCallback(async (): Promise<ActionResult> => {
+    const desktop = window.worklyDesktop;
+    if (!desktop?.rebuildLocalCache)
+      return {
+        ok: false,
+        message: "Cloud cache rebuild is available only in the desktop app.",
+      };
+    try {
+      const response = await desktop.rebuildLocalCache();
+      if (isRecord(response) && response.cancelled === true)
+        return { ok: false, message: "Local cache rebuild was cancelled." };
+      const rawState =
+        isRecord(response) && Object.hasOwn(response, "state")
+          ? response.state
+          : response;
+      setState(parsePersistedState(rawState));
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  }, []);
+
+  const latestActions = useMemo<AppStoreActions>(
     () => ({
-      state,
-      isLoading: state === null && loadError === null,
-      loadError,
       reload,
       initializeAccount,
       claimLocalAccount,
@@ -1091,11 +1194,10 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       deleteGoal,
       updatePreferences,
       updateLanguage,
+      rebuildLocalCache,
       resetLocalData,
     }),
     [
-      state,
-      loadError,
       reload,
       initializeAccount,
       claimLocalAccount,
@@ -1117,20 +1219,48 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       deleteGoal,
       updatePreferences,
       updateLanguage,
+      rebuildLocalCache,
       resetLocalData,
     ],
   );
 
+  const actions = useStableAppStoreActions(latestActions);
+  const storeState = useMemo<AppStoreState>(
+    () => ({
+      state,
+      isLoading: state === null && loadError === null,
+      loadError,
+    }),
+    [state, loadError],
+  );
+
   return (
-    <StoreContext.Provider value={value}>{children}</StoreContext.Provider>
+    <StoreActionsContext.Provider value={actions}>
+      <StoreStateContext.Provider value={storeState}>
+        {children}
+      </StoreStateContext.Provider>
+    </StoreActionsContext.Provider>
   );
 }
 
-export function useAppStore(): AppStore {
-  const context = useContext(StoreContext);
+export function useAppStoreState(): AppStoreState {
+  const context = useContext(StoreStateContext);
   if (!context)
-    throw new Error("useAppStore must be used inside AppStoreProvider");
+    throw new Error("useAppStoreState must be used inside AppStoreProvider");
   return context;
+}
+
+export function useAppStoreActions(): AppStoreActions {
+  const context = useContext(StoreActionsContext);
+  if (!context)
+    throw new Error("useAppStoreActions must be used inside AppStoreProvider");
+  return context;
+}
+
+export function useAppStore(): AppStore {
+  const storeState = useAppStoreState();
+  const actions = useAppStoreActions();
+  return useMemo(() => ({ ...storeState, ...actions }), [storeState, actions]);
 }
 
 export function getActiveSession(

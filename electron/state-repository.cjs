@@ -2,6 +2,10 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
+const {
+  compareCompletedSessionsNewestFirst,
+} = require("./session-ordering.cjs");
+const { goalTargetIssue } = require("./goal-validation.cjs");
 
 const APP_STATE_VERSION = 1;
 const LOCAL_SCHEMA_VERSION = 4;
@@ -133,7 +137,7 @@ function requireText(value, field, maxLength, { trim = true } = {}) {
   if (typeof value !== "string") fail("INVALID_TEXT", field + " must be text.");
   const text = trim ? value.trim() : value;
   if (!text) fail("INVALID_TEXT", field + " cannot be empty.");
-  if (text.length > maxLength)
+  if (Array.from(text).length > maxLength)
     fail("TEXT_TOO_LONG", field + " exceeds its maximum length.");
   return text;
 }
@@ -177,6 +181,19 @@ function normalizeCurrency(value, fallback, field) {
     fail(
       "INVALID_CURRENCY",
       field + " must be one of VND, USD, EUR, JPY, or GBP.",
+    );
+  }
+  return normalized;
+}
+
+function normalizeCountry(value, fallback, field) {
+  const candidate = value === undefined || value === null ? fallback : value;
+  const normalized =
+    typeof candidate === "string" ? candidate.trim().toUpperCase() : "";
+  if (!/^[A-Z]{2,3}$/.test(normalized)) {
+    fail(
+      "INVALID_COUNTRY",
+      field + " must be a two- or three-letter country code.",
     );
   }
   return normalized;
@@ -393,11 +410,8 @@ function normalizeState(raw) {
       displayName:
         source.displayName === undefined
           ? "You"
-          : requireText(source.displayName, "account.displayName", 120),
-      country:
-        source.country === undefined
-          ? "VN"
-          : requireText(source.country, "account.country", 8),
+          : requireText(source.displayName, "account.displayName", 100),
+      country: normalizeCountry(source.country, "VN", "account.country"),
       language: source.language === "en" ? "en" : "vi",
       currency: normalizeCurrency(source.currency, "VND", "account.currency"),
       timezone:
@@ -440,7 +454,7 @@ function normalizeState(raw) {
           );
     return {
       id: requireId(source.id, "projects[" + index + "].id"),
-      name: requireText(source.name, "projects[" + index + "].name", 250),
+      name: requireText(source.name, "projects[" + index + "].name", 160),
       paymentModel: PAYMENT_MODELS.has(source.paymentModel)
         ? source.paymentModel
         : "per_session",
@@ -453,11 +467,11 @@ function normalizeState(raw) {
       color:
         source.color === undefined
           ? "#7c3aed"
-          : requireText(source.color, "projects[" + index + "].color", 32),
+          : requireText(source.color, "projects[" + index + "].color", 64),
       icon:
         source.icon === undefined
           ? "✦"
-          : requireText(source.icon, "projects[" + index + "].icon", 16),
+          : requireText(source.icon, "projects[" + index + "].icon", 32),
       status,
       completedAt,
       createdAt,
@@ -674,8 +688,9 @@ function normalizeState(raw) {
     const field = "goals[" + index + "]";
     if (!GOAL_KINDS.has(source.kind))
       fail("INVALID_GOAL_KIND", field + ".kind is invalid.");
-    if (!Number.isFinite(source.target) || source.target <= 0)
-      fail("INVALID_GOAL_TARGET", field + ".target must be greater than zero.");
+    const targetIssue = goalTargetIssue(source.kind, source.target);
+    if (targetIssue)
+      fail("INVALID_GOAL_TARGET", field + ".target: " + targetIssue);
     return {
       id: requireId(source.id, field + ".id"),
       kind: source.kind,
@@ -1355,9 +1370,10 @@ class LocalStateRepository {
   importLegacyJson(legacyPath) {
     const migratingPath = legacyPath + ".migrating";
     const migratedPath = legacyPath + ".migrated";
-    if (this.hasAccount() || fs.existsSync(migratedPath)) return false;
+    if (this.hasAccount()) return { status: "already_initialized" };
+    if (fs.existsSync(migratedPath)) return { status: "already_migrated" };
     if (!fs.existsSync(legacyPath) && !fs.existsSync(migratingPath))
-      return false;
+      return { status: "not_found" };
 
     let claimedLegacyFile = false;
     try {
@@ -1367,12 +1383,27 @@ class LocalStateRepository {
       }
       const raw = JSON.parse(fs.readFileSync(migratingPath, "utf8"));
       this.replaceState(raw);
-      fs.renameSync(migratingPath, migratedPath);
-      return true;
-    } catch {
+      try {
+        fs.renameSync(migratingPath, migratedPath);
+        return { status: "success", archived: true };
+      } catch {
+        // The SQLite commit is authoritative. Keep the source recoverable and
+        // report the archive warning without pretending the import failed.
+        return {
+          status: "success",
+          archived: false,
+          warning: "archive_failed",
+          recoveryFile: migratingPath,
+        };
+      }
+    } catch (error) {
       // A failed parse/import must leave the user's legacy source recoverable.
       // Once the SQLite commit succeeds, keeping the `.migrating` marker is
       // safer than restoring the original path and importing it a second time.
+      let recoveryFile = fs.existsSync(migratingPath)
+        ? migratingPath
+        : legacyPath;
+      let restoreFailed = false;
       if (
         claimedLegacyFile &&
         !this.hasAccount() &&
@@ -1381,11 +1412,69 @@ class LocalStateRepository {
       ) {
         try {
           fs.renameSync(migratingPath, legacyPath);
+          recoveryFile = legacyPath;
         } catch {
-          /* preserve the claimed backup in place */
+          restoreFailed = true;
+          recoveryFile = migratingPath;
         }
       }
-      return false;
+      if (
+        error instanceof StateIntegrityError &&
+        error.code === "UNSUPPORTED_STATE_VERSION"
+      ) {
+        return {
+          status: "unsupported_version",
+          version: error.details?.version,
+          recoveryFile,
+        };
+      }
+      const filesystemError =
+        restoreFailed ||
+        (error &&
+          typeof error === "object" &&
+          typeof error.code === "string" &&
+          (/^E[A-Z]+$/.test(error.code) ||
+            /^(SQLITE_CANTOPEN|SQLITE_FULL|SQLITE_IOERR|SQLITE_READONLY)/.test(
+              error.code,
+            )));
+      return {
+        status: filesystemError ? "filesystem_error" : "invalid_data",
+        errorCode:
+          error instanceof StateIntegrityError
+            ? error.code
+            : typeof error?.code === "string"
+              ? error.code
+              : undefined,
+        recoveryFile,
+      };
+    }
+  }
+
+  skipLegacyImport(legacyPath) {
+    const sources = [legacyPath, legacyPath + ".migrating"].filter(
+      (candidate) => fs.existsSync(candidate),
+    );
+    if (sources.length === 0) return { status: "not_found" };
+    const suffix = new Date().toISOString().replace(/[:.]/g, "-");
+    const recoveryFiles = [];
+    try {
+      for (const source of sources) {
+        let destination = `${source}.skipped-${suffix}`;
+        if (fs.existsSync(destination))
+          destination = `${destination}-${crypto.randomUUID()}`;
+        fs.renameSync(source, destination);
+        recoveryFiles.push(destination);
+      }
+      return { status: "skipped", recoveryFiles };
+    } catch (error) {
+      return {
+        status: "filesystem_error",
+        errorCode:
+          error && typeof error === "object" && typeof error.code === "string"
+            ? error.code
+            : undefined,
+        recoveryFiles,
+      };
     }
   }
 
@@ -1418,6 +1507,115 @@ class LocalStateRepository {
     } catch {
       /* best-effort cleanup after explicit reset */
     }
+  }
+
+  wipeDeviceData(legacyPath) {
+    if (this.closed)
+      fail("DATABASE_CLOSED", "The local database is already closed.");
+
+    // Flush any older WAL frames before overwriting/deleting live rows. SQLite
+    // secure_delete plus VACUUM is a best-effort local removal strategy; it is
+    // not described as cryptographic erasure on SSDs or journaled filesystems.
+    this.db.exec("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA secure_delete = ON;");
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.exec(
+        [
+          "DELETE FROM session_pauses;",
+          "DELETE FROM sync_conflicts;",
+          "DELETE FROM sync_entity_revisions;",
+          "DELETE FROM sync_metadata;",
+          "DELETE FROM sync_outbox;",
+          "DELETE FROM payments;",
+          "DELETE FROM work_sessions;",
+          "DELETE FROM goals;",
+          "DELETE FROM preferences;",
+          "DELETE FROM projects;",
+          "DELETE FROM accounts;",
+        ].join(" "),
+      );
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+
+    this.db.exec(
+      "PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);",
+    );
+
+    const directory = path.dirname(legacyPath);
+    const databaseBackupPrefix = `${path.basename(this.databasePath)}.pre-v`;
+    const legacyPrefix = path.basename(legacyPath);
+    const removedFiles = [];
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      const isLegacySource =
+        entry.name === legacyPrefix ||
+        entry.name === `${legacyPrefix}.migrating` ||
+        entry.name === `${legacyPrefix}.migrated` ||
+        entry.name.startsWith(`${legacyPrefix}.skipped-`) ||
+        entry.name.startsWith(`${legacyPrefix}.migrating.skipped-`);
+      const isDatabaseBackup =
+        entry.name.startsWith(databaseBackupPrefix) &&
+        entry.name.endsWith(".backup");
+      if (!isLegacySource && !isDatabaseBackup) continue;
+      fs.rmSync(path.join(directory, entry.name), { force: true });
+      removedFiles.push(entry.name);
+    }
+    removedFiles.sort((left, right) => left.localeCompare(right));
+
+    const remainingRows = Number(
+      this.db
+        .prepare(
+          [
+            "SELECT",
+            "(SELECT COUNT(*) FROM accounts) +",
+            "(SELECT COUNT(*) FROM projects) +",
+            "(SELECT COUNT(*) FROM work_sessions) +",
+            "(SELECT COUNT(*) FROM session_pauses) +",
+            "(SELECT COUNT(*) FROM payments) +",
+            "(SELECT COUNT(*) FROM goals) +",
+            "(SELECT COUNT(*) FROM preferences) +",
+            "(SELECT COUNT(*) FROM sync_outbox) +",
+            "(SELECT COUNT(*) FROM sync_metadata) +",
+            "(SELECT COUNT(*) FROM sync_conflicts) +",
+            "(SELECT COUNT(*) FROM sync_entity_revisions) AS total",
+          ].join(" "),
+        )
+        .get().total,
+    );
+    const integrity = this.db.prepare("PRAGMA quick_check").get();
+    const foreignKeyErrors = this.db.prepare("PRAGMA foreign_key_check").all();
+    const walPath = `${this.databasePath}-wal`;
+    const walBytes = fs.existsSync(walPath) ? fs.statSync(walPath).size : 0;
+    if (
+      remainingRows !== 0 ||
+      integrity?.quick_check !== "ok" ||
+      foreignKeyErrors.length !== 0 ||
+      walBytes !== 0
+    ) {
+      fail(
+        "DEVICE_WIPE_VERIFICATION_FAILED",
+        "TimeFarm could not verify complete removal of local workspace data.",
+        {
+          remainingRows,
+          integrity: integrity?.quick_check,
+          foreignKeyErrors: foreignKeyErrors.length,
+          walBytes,
+        },
+      );
+    }
+    return {
+      state: emptyState(),
+      verification: {
+        remainingRows,
+        integrity: "ok",
+        foreignKeyErrors: 0,
+        walBytes,
+        removedFiles,
+      },
+    };
   }
 
   queueOperation(accountId, entityType, entityId, operation, payload) {
@@ -1561,26 +1759,73 @@ class LocalStateRepository {
    * commit so a restored device can never echo or overwrite cloud history.
    */
   bootstrapRemoteSnapshot(rawAuthUserId, rawSnapshot) {
-    if (this.hasAccount()) {
+    return this.restoreRemoteSnapshot(rawAuthUserId, rawSnapshot, false);
+  }
+
+  rebuildRemoteSnapshot(rawAuthUserId, rawSnapshot) {
+    return this.restoreRemoteSnapshot(rawAuthUserId, rawSnapshot, true);
+  }
+
+  assertCacheRebuildSafe(account, authUserId) {
+    if (!account || account.authUserId !== authUserId) {
       fail(
-        "BOOTSTRAP_REQUIRES_EMPTY_LOCAL_STATE",
-        "Cloud bootstrap is only allowed before local account setup.",
+        "CACHE_REBUILD_OWNER_MISMATCH",
+        "Only the authenticated owner can rebuild this local cloud cache.",
       );
     }
+    if (this.hasActiveSession())
+      fail(
+        "CACHE_REBUILD_ACTIVE_TIMER",
+        "Finish or discard the active timer before rebuilding local cache.",
+      );
+    const pending = this.db
+      .prepare(
+        "SELECT 1 AS present FROM sync_outbox WHERE account_id = ? AND status IN ('queued', 'error') LIMIT 1",
+      )
+      .get(account.id);
+    const conflict = this.db
+      .prepare(
+        "SELECT 1 AS present FROM sync_conflicts WHERE account_id = ? AND resolution = 'open' LIMIT 1",
+      )
+      .get(account.id);
+    if (pending || conflict)
+      fail(
+        "CACHE_REBUILD_UNSYNCED_DATA",
+        "Resolve or sync every local change before rebuilding local cache.",
+      );
+  }
+
+  restoreRemoteSnapshot(rawAuthUserId, rawSnapshot, replaceExisting) {
     const { state, cursor, revisions } = normalizeRemoteBootstrap(
       rawAuthUserId,
       rawSnapshot,
     );
     const account = state.account;
+    const currentAccount = this.getAccount();
+    if (currentAccount && !replaceExisting)
+      fail(
+        "BOOTSTRAP_REQUIRES_EMPTY_LOCAL_STATE",
+        "Cloud bootstrap is only allowed before local account setup.",
+      );
+    if (currentAccount)
+      this.assertCacheRebuildSafe(currentAccount, account.authUserId);
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      // A second process cannot normally share this database, but preserve the
-      // empty-state invariant after the transaction lock is acquired as well.
-      if (this.hasAccount()) {
+      const lockedAccount = this.getAccount();
+      if (lockedAccount && !replaceExisting) {
         fail(
           "BOOTSTRAP_REQUIRES_EMPTY_LOCAL_STATE",
           "Cloud bootstrap is only allowed before local account setup.",
         );
+      }
+      if (lockedAccount) {
+        this.assertCacheRebuildSafe(lockedAccount, account.authUserId);
+        this.db
+          .prepare("DELETE FROM sync_outbox WHERE account_id = ?")
+          .run(lockedAccount.id);
+        this.db
+          .prepare("DELETE FROM accounts WHERE id = ?")
+          .run(lockedAccount.id);
       }
       this.upsertAccount(account);
       this.syncProjects(account.id, state.projects);
@@ -1771,12 +2016,7 @@ class LocalStateRepository {
     const nextIds = new Set(sessions.map((session) => session.id));
     const latestCompletedId = [...sessions]
       .filter((session) => session.status === "completed")
-      .sort(
-        (left, right) =>
-          Date.parse(right.endedAt ?? right.startedAt) -
-            Date.parse(left.endedAt ?? left.startedAt) ||
-          right.id.localeCompare(left.id),
-      )[0]?.id;
+      .sort(compareCompletedSessionsNewestFirst)[0]?.id;
 
     for (const row of existing) {
       if (nextIds.has(row.id)) continue;
@@ -1806,7 +2046,7 @@ class LocalStateRepository {
       }
       const currentLatest = this.db
         .prepare(
-          "SELECT id FROM work_sessions WHERE account_id = ? AND status = 'completed' ORDER BY ended_at DESC, started_at DESC, id DESC LIMIT 1",
+          "SELECT id FROM work_sessions WHERE account_id = ? AND status = 'completed' ORDER BY ended_at DESC, id DESC LIMIT 1",
         )
         .get(accountId);
       if (
@@ -2117,35 +2357,82 @@ class LocalStateRepository {
 
   resolveSyncConflict(conflictId) {
     if (!validId(conflictId)) return false;
-    const conflict = this.db
-      .prepare(
-        "SELECT account_id, entity_type, entity_id FROM sync_conflicts WHERE id = ? AND resolution = 'open'",
-      )
-      .get(conflictId);
-    if (!conflict) return false;
-    const localEntityId = this.remoteLocalEntityId(
-      conflict.account_id,
-      conflict.entity_type,
-      conflict.entity_id,
-    );
-    const revision = this.getEntityRevision(
-      conflict.account_id,
-      conflict.entity_type,
-      localEntityId,
-    );
+    const accountId = this.currentAccountId();
+    if (!accountId) return false;
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      if (revision !== null)
-        this.db
-          .prepare(
-            "UPDATE sync_outbox SET expected_revision = ?, status = 'queued', attempts = 0, last_error = NULL, next_attempt_at = NULL WHERE account_id = ? AND entity_type = ? AND entity_id = ? AND status IN ('queued', 'error')",
-          )
-          .run(
-            revision,
-            conflict.account_id,
-            conflict.entity_type,
-            localEntityId,
-          );
+      const conflict = this.db
+        .prepare(
+          "SELECT account_id, entity_type, entity_id FROM sync_conflicts WHERE id = ? AND account_id = ? AND resolution = 'open'",
+        )
+        .get(conflictId, accountId);
+      if (!conflict) {
+        this.db.exec("COMMIT");
+        return false;
+      }
+      const conflictAccountId = String(conflict.account_id);
+      const conflictEntityType = String(conflict.entity_type);
+      const conflictEntityId = String(conflict.entity_id);
+      const localEntityId = this.remoteLocalEntityId(
+        conflictAccountId,
+        conflictEntityType,
+        conflictEntityId,
+      );
+      const localPayload = this.localCanonicalEntity(
+        conflictAccountId,
+        conflictEntityType,
+        localEntityId,
+      );
+      if (
+        conflictEntityType === "work_session" &&
+        localPayload &&
+        localPayload.status !== "completed"
+      ) {
+        fail(
+          "ACTIVE_SESSION_CONFLICT_NOT_RETRYABLE",
+          "An active timer must be completed before its local state can be retried.",
+        );
+      }
+      if (
+        localPayload === undefined &&
+        ["account", "preferences", "work_session"].includes(conflictEntityType)
+      ) {
+        fail(
+          "LOCAL_CONFLICT_NOT_RETRYABLE",
+          "This entity cannot be deleted through cloud conflict resolution.",
+        );
+      }
+
+      // Always recreate the retry from the canonical entity inside the same
+      // transaction. An older queued payload may be stale, and a protected
+      // remote delete can produce a conflict without any local outbox row.
+      const operation = localPayload === undefined ? "delete" : "upsert";
+      const operationId = this.queueOperation(
+        conflictAccountId,
+        conflictEntityType,
+        localEntityId,
+        operation,
+        localPayload ?? { id: localEntityId },
+      );
+      this.setEntitySyncStatus(
+        {
+          account_id: conflictAccountId,
+          entity_type: conflictEntityType,
+          entity_id: localEntityId,
+        },
+        "queued",
+      );
+      const retry = this.db
+        .prepare(
+          "SELECT 1 AS present FROM sync_outbox WHERE id = ? AND status = 'queued' LIMIT 1",
+        )
+        .get(operationId);
+      if (!retry)
+        fail(
+          "CONFLICT_RETRY_NOT_DURABLE",
+          "The local conflict retry could not be persisted.",
+        );
+
       const result = this.db
         .prepare(
           "UPDATE sync_conflicts SET resolution = 'resolved', resolved_at = ? WHERE id = ? AND resolution = 'open'",

@@ -1,5 +1,6 @@
 import { Temporal } from "@js-temporal/polyfill";
 import { localeFor } from "../i18n";
+import { isValidGoalTarget } from "./goals";
 import { sumMoney } from "./money";
 import {
   activeDurationMs,
@@ -218,6 +219,54 @@ export function clipIntervalsToRange(
     .filter((interval) => interval.end > interval.start);
 }
 
+function roundedProportionalMinor(
+  amountMinor: number,
+  partMs: number,
+  totalMs: number,
+): number {
+  if (amountMinor === 0 || partMs === 0 || totalMs <= 0) return 0;
+  const numerator = BigInt(amountMinor) * BigInt(partMs);
+  const denominator = BigInt(totalMs);
+  // Money is non-negative in the domain. This is Math.round without an
+  // intermediate floating-point product that could exceed MAX_SAFE_INTEGER.
+  return Number((numerator * 2n + denominator) / (denominator * 2n));
+}
+
+function allocateMinorByWeight(
+  amountMinor: number,
+  totalMs: number,
+  weights: ReadonlyMap<string, number>,
+): Map<string, number> {
+  const entries = [...weights.entries()].filter(([, weight]) => weight > 0);
+  if (amountMinor === 0 || totalMs <= 0 || entries.length === 0)
+    return new Map(entries.map(([key]) => [key, 0]));
+
+  const denominator = BigInt(totalMs);
+  const ranked = entries.map(([key, weight]) => {
+    const numerator = BigInt(amountMinor) * BigInt(weight);
+    return {
+      key,
+      amount: Number(numerator / denominator),
+      remainder: numerator % denominator,
+    };
+  });
+  const allocated = ranked.reduce((total, entry) => total + entry.amount, 0);
+  const includedMs = entries.reduce((total, [, weight]) => total + weight, 0);
+  let remaining =
+    roundedProportionalMinor(amountMinor, includedMs, totalMs) - allocated;
+
+  // Largest remainder, with the local-day key as a stable tie-breaker.
+  ranked.sort((left, right) => {
+    if (left.remainder === right.remainder)
+      return left.key.localeCompare(right.key);
+    return left.remainder > right.remainder ? -1 : 1;
+  });
+  for (let index = 0; remaining > 0; index += 1, remaining -= 1)
+    ranked[index % ranked.length].amount += 1;
+
+  return new Map(ranked.map(({ key, amount }) => [key, amount]));
+}
+
 function coalesceIntervals(
   intervals: { start: number; end: number }[],
 ): { start: number; end: number }[] {
@@ -314,7 +363,11 @@ export function sessionContribution(
   const earningActiveMs = matchingEarnings ? activeMs : 0;
   const earningsMinor =
     matchingEarnings && totalMs > 0
-      ? Math.round(matchingEarnings.amountMinor * (activeMs / totalMs))
+      ? roundedProportionalMinor(
+          matchingEarnings.amountMinor,
+          activeMs,
+          totalMs,
+        )
       : 0;
   return { activeMs, earningActiveMs, earningsMinor };
 }
@@ -358,6 +411,33 @@ export function rangeSummary(
   };
 }
 
+export function liveRangeSummary(
+  sessions: WorkSession[],
+  currency: CurrencyCode,
+  range: AnalyticsRange,
+  nowMs = Math.min(Date.now(), range.endMs),
+): RangeSummary {
+  const completed = rangeSummary(sessions, currency, range);
+  const activeMs = unionDurationMs(
+    sessions.flatMap((session) =>
+      clipIntervalsToRange(
+        activeIntervals(
+          session.startedAt,
+          session.endedAt,
+          session.pauses,
+          nowMs,
+        ),
+        range,
+      ),
+    ),
+  );
+  return {
+    ...completed,
+    activeMs,
+    averageActiveMsPerDay: activeMs / rangeDayCount(range),
+  };
+}
+
 export function dailySeries(
   sessions: WorkSession[],
   days: number,
@@ -378,7 +458,7 @@ export function dailySeries(
     endMs: now.getTime(),
     timezone: zone,
   };
-  return rangeDailySeries(sessions, currency, range, language);
+  return rangeDailySeries(sessions, currency, range, language, now.getTime());
 }
 
 export function rangeDailySeries(
@@ -386,6 +466,7 @@ export function rangeDailySeries(
   currency: CurrencyCode,
   range: AnalyticsRange,
   language: AppLanguage = "en",
+  nowMs = Math.min(Date.now(), range.endMs),
 ): DailyPoint[] {
   const points = new Map<string, DailyPoint>();
   const activeIntervalsInRange: { start: number; end: number }[] = [];
@@ -412,11 +493,12 @@ export function rangeDailySeries(
     });
   }
 
-  for (const session of completedSessions(sessions)) {
+  for (const session of sessions) {
     const allIntervals = activeIntervals(
       session.startedAt,
       session.endedAt,
       session.pauses,
+      nowMs,
     );
     const totalMs = allIntervals.reduce(
       (total, interval) => total + interval.end - interval.start,
@@ -425,16 +507,19 @@ export function rangeDailySeries(
     if (totalMs === 0) continue;
     const clippedIntervals = clipIntervalsToRange(allIntervals, range);
     activeIntervalsInRange.push(...clippedIntervals);
-    if (session.earnings?.currency === currency)
-      earningIntervalsInRange.push(...clippedIntervals);
+    const contributesEarnings =
+      session.status === "completed" && session.earnings?.currency === currency;
+    if (contributesEarnings) earningIntervalsInRange.push(...clippedIntervals);
     const byDay = splitIntervalsByLocalDay(clippedIntervals, zone);
-    for (const [key, activeMs] of byDay.entries()) {
-      const point = points.get(key);
-      if (!point) continue;
-      if (session.earnings?.currency === currency) {
-        point.earningsMinor += Math.round(
-          session.earnings.amountMinor * (activeMs / totalMs),
-        );
+    if (contributesEarnings && session.earnings) {
+      const allocated = allocateMinorByWeight(
+        session.earnings.amountMinor,
+        totalMs,
+        byDay,
+      );
+      for (const [key, earningsMinor] of allocated) {
+        const point = points.get(key);
+        if (point) point.earningsMinor += earningsMinor;
       }
     }
   }
@@ -512,12 +597,14 @@ export function periodComparison(
   sessions: WorkSession[],
   currency: CurrencyCode,
   range: AnalyticsRange,
+  nowMs = Math.min(Date.now(), range.endMs),
 ): PeriodComparison {
-  const current = rangeSummary(sessions, currency, range);
-  const previous = rangeSummary(
+  const current = liveRangeSummary(sessions, currency, range, nowMs);
+  const previous = liveRangeSummary(
     sessions,
     currency,
     previousEquivalentRange(range),
+    nowMs,
   );
   const percentChange = (
     currentValue: number,
@@ -640,11 +727,10 @@ export function goalCurrentValue(
       );
     }).length;
   }
-  const summary = rangeSummary(
-    sessions,
-    currency,
-    goalRange(goal.kind, timezone, now.getTime()),
-  );
+  const range = goalRange(goal.kind, timezone, now.getTime());
+  const summary = goal.kind.startsWith("hours")
+    ? liveRangeSummary(sessions, currency, range, now.getTime())
+    : rangeSummary(sessions, currency, range);
   return goal.kind.startsWith("hours")
     ? summary.activeMs / 3_600_000
     : summary.earningsMinor;
@@ -666,8 +752,12 @@ export function calculateGoalProgress(
     now,
     timezone,
   );
-  const percentage = Math.min(100, (current / goal.target) * 100);
-  const remaining = Math.max(0, goal.target - current);
+  const validTarget = isValidGoalTarget(goal.kind, goal.target);
+  const target = validTarget ? goal.target : 0;
+  const percentage = validTarget
+    ? Math.min(100, Math.max(0, (current / target) * 100))
+    : 0;
+  const remaining = validTarget ? Math.max(0, target - current) : 0;
   const range = goalRange(goal.kind, timezone, now.getTime());
   const zone = safeTimezone(timezone);
   const startDate = instant(range.startMs)
@@ -680,28 +770,35 @@ export function calculateGoalProgress(
       : dayStart(startDate.add({ months: 1 }), zone);
   const elapsedMs = Math.max(0, now.getTime() - range.startMs);
   const spanMs = Math.max(1, endExclusive - range.startMs);
-  const expectedCurrent = goal.target * Math.min(1, elapsedMs / spanMs);
+  const expectedCurrent = target * Math.min(1, elapsedMs / spanMs);
   const pacePerHour =
     elapsedMs < 60_000 || current === 0
       ? null
       : current / (elapsedMs / 3_600_000);
-  const projectedCompletionAt =
+  const projectedMs =
     pacePerHour && remaining > 0
-      ? new Date(
-          now.getTime() + (remaining / pacePerHour) * 3_600_000,
-        ).toISOString()
+      ? now.getTime() + (remaining / pacePerHour) * 3_600_000
+      : Number.NaN;
+  const projectedCompletionAt =
+    Number.isFinite(projectedMs) && Math.abs(projectedMs) <= 8.64e15
+      ? new Date(projectedMs).toISOString()
       : undefined;
-  const status: GoalProgress["status"] =
-    current >= goal.target
+  const status: GoalProgress["status"] = !validTarget
+    ? "behind"
+    : current >= target
       ? "complete"
-      : current >= expectedCurrent * 1.05
-        ? "ahead"
-        : current >= expectedCurrent * 0.95
-          ? "on_track"
-          : "behind";
+      : expectedCurrent === 0
+        ? current > 0
+          ? "ahead"
+          : "on_track"
+        : current > expectedCurrent && current >= expectedCurrent * 1.05
+          ? "ahead"
+          : current >= expectedCurrent * 0.95
+            ? "on_track"
+            : "behind";
   return {
     current,
-    target: goal.target,
+    target,
     remaining,
     percentage,
     expectedCurrent,

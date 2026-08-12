@@ -4,11 +4,14 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const {
+  captureTimerIntentTimestamp,
   CommandError,
   CommandValidationError,
   CommandService,
+  createLocalMutationExecutor,
 } = require("./command-service.cjs");
 const { LocalStateRepository } = require("./state-repository.cjs");
+const { createCoalescedSyncExecutor } = require("./sync-service.cjs");
 
 const START = "2026-08-10T00:00:00.000Z";
 const ONE_HOUR = "2026-08-10T01:00:00.000Z";
@@ -197,8 +200,261 @@ test("runs timer start, pause, resume and completion with main-owned timestamps 
         true,
       );
     },
-    [START, START, START, ONE_HOUR, NINETY_MINUTES, THREE_HOURS],
+    [START, START, START, START, ONE_HOUR, NINETY_MINUTES, THREE_HOURS],
   ));
+
+test("uses IPC receipt timestamps for pause, resume, and completion after later work is delayed", () =>
+  withService(
+    ({ service }) => {
+      initialize(service);
+      const project = createProject(service);
+      const started = service.execute({
+        type: "session.start",
+        payload: { projectId: project.result.projectId },
+      });
+
+      const pauseCommand = { type: "session.pause", payload: {} };
+      const pauseIntent = captureTimerIntentTimestamp(
+        pauseCommand,
+        () => ONE_HOUR,
+      );
+      const paused = service.execute(pauseCommand, {
+        intentTimestamp: pauseIntent,
+      });
+      assert.equal(paused.state.sessions[0].pauses[0].startedAt, ONE_HOUR);
+
+      const resumeCommand = { type: "session.resume", payload: {} };
+      const resumeIntent = captureTimerIntentTimestamp(
+        resumeCommand,
+        () => NINETY_MINUTES,
+      );
+      const resumed = service.execute(resumeCommand, {
+        intentTimestamp: resumeIntent,
+      });
+      assert.equal(resumed.state.sessions[0].pauses[0].endedAt, NINETY_MINUTES);
+
+      const completeCommand = {
+        type: "session.complete",
+        payload: {
+          sessionId: started.result.sessionId,
+          money: { amountMinor: 0, currency: "VND" },
+        },
+      };
+      const completeIntent = captureTimerIntentTimestamp(
+        completeCommand,
+        () => THREE_HOURS,
+      );
+      const completed = service.execute(completeCommand, {
+        intentTimestamp: completeIntent,
+      });
+      assert.equal(completed.state.sessions[0].endedAt, THREE_HOURS);
+      assert.equal(completed.result.activeDurationMs, 9_000_000);
+    },
+    [START, START, START, FOUR_HOURS],
+  ));
+
+test("rejects a recovery end after IPC receipt time without mutating the active session", () =>
+  withService(
+    ({ service, repository }) => {
+      initialize(service);
+      const project = createProject(service);
+      const started = service.execute({
+        type: "session.start",
+        payload: { projectId: project.result.projectId },
+      });
+      const command = {
+        type: "session.recover-complete",
+        payload: {
+          sessionId: started.result.sessionId,
+          money: { amountMinor: 0, currency: "VND" },
+          endedAt: FOUR_HOURS,
+        },
+      };
+      const receivedAt = captureTimerIntentTimestamp(
+        command,
+        () => THREE_HOURS,
+      );
+
+      expectCommand(
+        () => service.execute(command, { intentTimestamp: receivedAt }),
+        "SESSION_END_IN_FUTURE",
+      );
+      assert.equal(repository.loadState().sessions[0].status, "running");
+
+      command.payload.endedAt = ONE_HOUR;
+      const recovered = service.execute(command, {
+        intentTimestamp: receivedAt,
+      });
+      assert.equal(recovered.state.sessions[0].endedAt, ONE_HOUR);
+    },
+    [START, START, START],
+  ));
+
+test("uses the canonical ID tie-breaker when completed sessions end together", () =>
+  withService(
+    ({ service, repository }) => {
+      initialize(service);
+      const project = createProject(service);
+      const state = repository.loadState();
+      state.sessions = [
+        {
+          id: "z-session",
+          projectId: project.result.projectId,
+          startedAt: START,
+          endedAt: FOUR_HOURS,
+          timezone: "Asia/Saigon",
+          pauses: [],
+          activeDurationMs: 14_400_000,
+          status: "completed",
+          earnings: { amountMinor: 1, currency: "VND" },
+          createdAt: START,
+          updatedAt: FOUR_HOURS,
+          syncStatus: "queued",
+        },
+        {
+          id: "a-session",
+          projectId: project.result.projectId,
+          startedAt: THREE_HOURS,
+          endedAt: FOUR_HOURS,
+          timezone: "Asia/Saigon",
+          pauses: [],
+          activeDurationMs: 3_600_000,
+          status: "completed",
+          earnings: { amountMinor: 1, currency: "VND" },
+          createdAt: THREE_HOURS,
+          updatedAt: FOUR_HOURS,
+          syncStatus: "queued",
+        },
+      ];
+      repository.replaceState(state);
+
+      const edited = service.execute({
+        type: "session.edit-latest",
+        payload: {
+          sessionId: "z-session",
+          money: { amountMinor: 2, currency: "VND" },
+        },
+      });
+      assert.equal(
+        edited.state.sessions.find((session) => session.id === "z-session")
+          .earnings.amountMinor,
+        2,
+      );
+      expectCommand(
+        () =>
+          service.execute({
+            type: "session.edit-latest",
+            payload: {
+              sessionId: "a-session",
+              money: { amountMinor: 3, currency: "VND" },
+            },
+          }),
+        "SESSION_NOT_LATEST_COMPLETED",
+      );
+    },
+    [START, START, FOUR_HOURS],
+  ));
+
+test("local mutation executor rejects async work and remains usable", async () => {
+  const runLocalMutation = createLocalMutationExecutor();
+  await assert.rejects(
+    runLocalMutation(async () => "network-result"),
+    /Local mutation callbacks must be synchronous/,
+  );
+  assert.equal(await runLocalMutation(() => "local-result"), "local-result");
+});
+
+test("a slow sync does not block local pause, resume, or complete mutations", async () => {
+  let durable = {
+    version: 1,
+    account: null,
+    projects: [],
+    sessions: [],
+    payments: [],
+    goals: [],
+    preferences: {},
+  };
+  const repository = {
+    loadState: () => durable,
+    replaceState: (next) => {
+      durable = next;
+      return durable;
+    },
+  };
+  let id = 0;
+  const service = new CommandService({
+    repository,
+    clock: () => START,
+    idFactory: () => `concurrent-${++id}`,
+    timezone: () => "Asia/Saigon",
+  });
+  const runLocalMutation = createLocalMutationExecutor();
+  const runSync = createCoalescedSyncExecutor();
+  const remote = (() => {
+    let resolve;
+    const promise = new Promise((resolvePromise) => {
+      resolve = resolvePromise;
+    });
+    return { promise, resolve };
+  })();
+
+  await runLocalMutation(() => initialize(service));
+  const project = await runLocalMutation(() => createProject(service));
+  const started = await runLocalMutation(() =>
+    service.execute({
+      type: "session.start",
+      payload: { projectId: project.result.projectId },
+    }),
+  );
+
+  let syncSettled = false;
+  const slowSync = runSync(() => remote.promise);
+  void slowSync.then(() => {
+    syncSettled = true;
+  });
+  const pauseCommand = { type: "session.pause", payload: {} };
+  const pauseIntent = captureTimerIntentTimestamp(pauseCommand, () => ONE_HOUR);
+  const paused = await runLocalMutation(() =>
+    service.execute(pauseCommand, {
+      intentTimestamp: pauseIntent,
+    }),
+  );
+  assert.equal(paused.state.sessions[0].status, "paused");
+
+  const resumeCommand = { type: "session.resume", payload: {} };
+  const resumeIntent = captureTimerIntentTimestamp(
+    resumeCommand,
+    () => NINETY_MINUTES,
+  );
+  const resumed = await runLocalMutation(() =>
+    service.execute(resumeCommand, {
+      intentTimestamp: resumeIntent,
+    }),
+  );
+  assert.equal(resumed.state.sessions[0].status, "running");
+
+  const completeCommand = {
+    type: "session.complete",
+    payload: {
+      sessionId: started.result.sessionId,
+      money: { amountMinor: 0, currency: "VND" },
+    },
+  };
+  const completeIntent = captureTimerIntentTimestamp(
+    completeCommand,
+    () => THREE_HOURS,
+  );
+  const completed = await runLocalMutation(() =>
+    service.execute(completeCommand, {
+      intentTimestamp: completeIntent,
+    }),
+  );
+  assert.equal(completed.state.sessions[0].endedAt, THREE_HOURS);
+  assert.equal(syncSettled, false);
+
+  remote.resolve({ state: "complete" });
+  await slowSync;
+});
 
 test("rejects arbitrary session completion/discard and handles an active-session discard without cloud history", () =>
   withService(({ service, repository }) => {
@@ -474,14 +730,17 @@ test("updates and deletes only history-free local projects", () =>
       type: "session.start",
       payload: { projectId: second.result.projectId },
     });
-    service.execute({
-      type: "session.recover-complete",
-      payload: {
-        sessionId: active.result.sessionId,
-        money: { amountMinor: 0, currency: "VND" },
-        endedAt: ONE_HOUR,
+    service.execute(
+      {
+        type: "session.recover-complete",
+        payload: {
+          sessionId: active.result.sessionId,
+          money: { amountMinor: 0, currency: "VND" },
+          endedAt: ONE_HOUR,
+        },
       },
-    });
+      { intentTimestamp: ONE_HOUR },
+    );
     expectCommand(
       () =>
         service.execute({
@@ -504,6 +763,22 @@ test("validates and persists goal and dashboard preference changes without custo
         }),
       "COMMAND_VALIDATION_FAILED",
     );
+    expectCommand(
+      () =>
+        service.execute({
+          type: "goal.create",
+          payload: { kind: "earnings_daily", target: 1.5 },
+        }),
+      "COMMAND_VALIDATION_FAILED",
+    );
+    expectCommand(
+      () =>
+        service.execute({
+          type: "goal.create",
+          payload: { kind: "projects_completed", target: 1.5 },
+        }),
+      "COMMAND_VALIDATION_FAILED",
+    );
     const goal = service.execute({
       type: "goal.create",
       payload: { kind: "hours_daily", target: 4 },
@@ -512,6 +787,23 @@ test("validates and persists goal and dashboard preference changes without custo
       type: "goal.update",
       payload: { goalId: goal.result.goalId, target: 5 },
     });
+    assert.equal(repository.loadState().goals[0].target, 5);
+    service.execute({
+      type: "goal.update",
+      payload: {
+        goalId: goal.result.goalId,
+        kind: "projects_completed",
+        target: 5,
+      },
+    });
+    expectCommand(
+      () =>
+        service.execute({
+          type: "goal.update",
+          payload: { goalId: goal.result.goalId, target: 1.5 },
+        }),
+      "INVALID_GOAL_TARGET",
+    );
     assert.equal(repository.loadState().goals[0].target, 5);
     service.execute({
       type: "goal.delete",

@@ -1,6 +1,9 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { SyncService } = require("./sync-service.cjs");
+const {
+  createCoalescedSyncExecutor,
+  SyncService,
+} = require("./sync-service.cjs");
 
 function operation(id) {
   return {
@@ -40,6 +43,176 @@ function controlledTimeoutScheduler() {
 async function waitForRpcSetup() {
   await new Promise((resolve) => setImmediate(resolve));
 }
+
+test("coalesces main-process sync requests onto one background promise", async () => {
+  const runSync = createCoalescedSyncExecutor();
+  const remote = deferred();
+  let runs = 0;
+  const first = runSync(() => {
+    runs += 1;
+    return remote.promise;
+  });
+  const second = runSync(() => {
+    runs += 1;
+    return Promise.resolve("duplicate");
+  });
+
+  assert.equal(first, second);
+  await Promise.resolve();
+  assert.equal(runs, 1);
+  remote.resolve("complete");
+  assert.equal(await first, "complete");
+  assert.equal(await second, "complete");
+
+  const next = runSync(() => {
+    runs += 1;
+    return "next";
+  });
+  assert.equal(await next, "next");
+  assert.equal(runs, 2);
+});
+
+test("coalesces SyncService calls before auth and keeps one pull-before-push run", async () => {
+  const token = deferred();
+  const calls = [];
+  let tokenCalls = 0;
+  let cursor = 0;
+  const repository = {
+    getPullCursor: () => cursor,
+    applyRemoteChanges: (changes) => {
+      cursor = changes.at(-1)?.cursor ?? cursor;
+      return { cursor, applied: changes.length, conflicts: 0 };
+    },
+    getQueuedOperations: () => [operation("one")],
+    markOperationSynced: () => {},
+    markOperationFailed: () => {},
+  };
+  const authService = {
+    isConfigured: () => true,
+    getAccessToken: () => {
+      tokenCalls += 1;
+      return token.promise;
+    },
+    client: {
+      rpc: async (name) => {
+        calls.push(name);
+        return name === "workly_pull_changes"
+          ? { data: [], error: null }
+          : { data: { remoteRevision: 1 }, error: null };
+      },
+    },
+  };
+  const service = new SyncService({ repository, authService });
+
+  const first = service.syncNow("auth-user-1");
+  const second = service.syncNow("auth-user-1");
+  const third = service.syncNow("auth-user-1");
+  assert.equal(first, second);
+  assert.equal(second, third);
+  await Promise.resolve();
+  assert.equal(tokenCalls, 1);
+  token.resolve("token");
+
+  const expected = { state: "complete", processed: 1, failed: 0 };
+  assert.deepEqual(await first, expected);
+  assert.deepEqual(await second, expected);
+  assert.deepEqual(await third, expected);
+  assert.deepEqual(calls, [
+    "workly_pull_changes",
+    "workly_apply_sync_operation",
+  ]);
+  assert.equal(service.running, false);
+});
+
+test("cancels an in-flight pull before it can write into a wiped repository", async () => {
+  const pull = deferred();
+  let remoteApplies = 0;
+  let queuedReads = 0;
+  const repository = {
+    getPullCursor: () => 0,
+    applyRemoteChanges: () => {
+      remoteApplies += 1;
+      return { cursor: 1, applied: 1, conflicts: 0 };
+    },
+    getQueuedOperations: () => {
+      queuedReads += 1;
+      return [];
+    },
+    setOperationExpectedRevision: () => true,
+    markOperationSynced: () => {},
+  };
+  const service = new SyncService({
+    repository,
+    authService: {
+      isConfigured: () => true,
+      getAccessToken: async () => "token",
+      client: {
+        rpc: () => pull.promise,
+      },
+    },
+  });
+
+  const running = service.syncNow("auth-user-1");
+  await waitForRpcSetup();
+  assert.deepEqual(service.cancelPendingSync(), { cancelled: true });
+  pull.resolve({
+    data: [
+      {
+        cursor: 1,
+        entityType: "project",
+        entityId: "project-1",
+        operation: "upsert",
+        payload: {},
+      },
+    ],
+    error: null,
+  });
+
+  assert.deepEqual(await running, {
+    state: "cancelled",
+    processed: 0,
+    failed: 0,
+  });
+  assert.equal(remoteApplies, 0);
+  assert.equal(queuedReads, 0);
+});
+
+test("cancels an in-flight push before it can acknowledge or fail a wiped outbox", async () => {
+  const push = deferred();
+  let synced = 0;
+  let failed = 0;
+  const repository = {
+    getQueuedOperations: () => [{ ...operation("one"), expectedRevision: 0 }],
+    setOperationExpectedRevision: () => true,
+    markOperationSynced: () => {
+      synced += 1;
+    },
+    markOperationFailed: () => {
+      failed += 1;
+    },
+  };
+  const service = new SyncService({
+    repository,
+    authService: {
+      isConfigured: () => true,
+      getAccessToken: async () => "token",
+      client: { rpc: () => push.promise },
+    },
+  });
+
+  const running = service.syncNow("auth-user-1");
+  await waitForRpcSetup();
+  service.cancelPendingSync();
+  push.resolve({ data: { conflict: false, remoteRevision: 1 }, error: null });
+
+  assert.deepEqual(await running, {
+    state: "cancelled",
+    processed: 0,
+    failed: 0,
+  });
+  assert.equal(synced, 0);
+  assert.equal(failed, 0);
+});
 
 test("sync worker marks successful outbox operations exactly once per run", async () => {
   const marked = [];

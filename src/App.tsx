@@ -3,6 +3,7 @@ import {
   Suspense,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
   type ReactNode,
@@ -16,6 +17,8 @@ import {
   ChevronRight,
   CircleDollarSign,
   Clock3,
+  Download,
+  FolderOpen,
   FolderKanban,
   Globe2,
   History,
@@ -42,12 +45,11 @@ import {
   cumulativeSeries,
   currentDayRange,
   goalUnit,
+  liveRangeSummary,
   periodComparison,
   projectBreakdown,
   rangeDailySeries,
-  rangeSummary,
   resolveRange,
-  sessionContribution,
 } from "./domain/analytics";
 import { formatMoney, groupedMoney } from "./domain/money";
 import {
@@ -66,12 +68,20 @@ import {
   type DashboardWidgetSize,
   type Goal,
   type Payment,
+  type Preferences,
   type Project,
   type ProjectStatus,
   type WorkSession,
 } from "./domain/types";
 import { translate, type TranslationKey } from "./i18n";
-import { getActiveSession, themeClass, useAppStore } from "./lib/state";
+import {
+  getActiveSession,
+  themeClass,
+  useAppStore,
+  useAppStoreActions,
+  useAppStoreState,
+  type ActionResult,
+} from "./lib/state";
 import { useAuth, type SafeAuthUser } from "./lib/auth";
 import { useCurrentTime } from "./lib/clock";
 import {
@@ -166,6 +176,27 @@ function label(
   return translate(language, "workspace", key);
 }
 
+function TimeFarmBrand({ large = false }: { large?: boolean }) {
+  return (
+    <div className={`brand ${large ? "brand-large" : ""}`.trim()}>
+      <span className="brand-mark" aria-hidden="true">
+        <Clock3 size={large ? 19 : 15} strokeWidth={2} />
+      </span>
+      <span>TimeFarm</span>
+    </div>
+  );
+}
+
+function formatTimerClock(durationMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1_000));
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  return [hours, minutes, seconds]
+    .map((value) => String(value).padStart(2, "0"))
+    .join(":");
+}
+
 function defaultLanguage(): AppLanguage {
   return typeof navigator !== "undefined" &&
     navigator.language.toLowerCase().startsWith("vi")
@@ -203,12 +234,48 @@ export function App() {
     state: "idle",
   });
   const [cloudBootstrapAttempt, setCloudBootstrapAttempt] = useState(0);
+  const [legacyImport, setLegacyImport] = useState<LegacyImportStatus | null>(
+    () =>
+      window.worklyDesktop?.getLegacyImportStatus
+        ? null
+        : { status: "not_found" },
+  );
   const shellLanguage = defaultLanguage();
+  const legacyRecoveryRequired = Boolean(
+    legacyImport &&
+      ["invalid_data", "filesystem_error", "unsupported_version"].includes(
+        legacyImport.status,
+      ),
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const getStatus = window.worklyDesktop?.getLegacyImportStatus;
+    if (!getStatus) return undefined;
+    void getStatus()
+      .then((result) => {
+        if (!cancelled) setLegacyImport(result);
+      })
+      .catch(() => {
+        if (!cancelled)
+          setLegacyImport({
+            status: "filesystem_error",
+            errorCode: "STATUS_UNAVAILABLE",
+          });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const theme = state?.account ? state.preferences.theme : "light";
   const documentLanguage = state?.account?.language ?? "vi";
   useEffect(() => {
     document.documentElement.lang = documentLanguage;
+    document.title =
+      documentLanguage === "vi"
+        ? "TimeFarm — Tập trung làm việc, rõ ràng thu nhập"
+        : "TimeFarm — Focused work, clear earnings";
   }, [documentLanguage]);
 
   useEffect(() => {
@@ -227,6 +294,8 @@ export function App() {
     const desktop = window.worklyDesktop;
     const needsBootstrap = Boolean(
       desktop?.bootstrapAuthenticatedAccount &&
+        legacyImport !== null &&
+        !legacyRecoveryRequired &&
         auth.configured &&
         auth.authenticated &&
         !state?.account,
@@ -278,6 +347,8 @@ export function App() {
     auth.configured,
     auth.offline,
     cloudBootstrapAttempt,
+    legacyImport,
+    legacyRecoveryRequired,
     reload,
     state?.account,
   ]);
@@ -292,7 +363,7 @@ export function App() {
         }}
       />
     );
-  if (isLoading || authLoading || !state) {
+  if (isLoading || authLoading || !state || legacyImport === null) {
     return (
       <div className="splash">
         <LoaderCircle size={28} className="spin" />
@@ -300,6 +371,21 @@ export function App() {
       </div>
     );
   }
+  if (legacyRecoveryRequired)
+    return (
+      <LegacyImportRecoveryScreen
+        language={shellLanguage}
+        status={legacyImport!}
+        onStatusChange={(result) => {
+          setLegacyImport(result);
+          if (
+            result.status === "success" ||
+            result.status === "already_initialized"
+          )
+            void reload();
+        }}
+      />
+    );
   if (auth.configured && !auth.authenticated)
     return <AuthenticationScreen language={shellLanguage} />;
   const needsCloudBootstrap = Boolean(
@@ -356,6 +442,121 @@ export function App() {
   return <Workspace />;
 }
 
+function LegacyImportRecoveryScreen({
+  language,
+  status,
+  onStatusChange,
+}: {
+  language: AppLanguage;
+  status: LegacyImportStatus;
+  onStatusChange: (status: LegacyImportStatus) => void;
+}) {
+  const [busy, setBusy] = useState<
+    "retry" | "open_data_folder" | "export_recovery" | "skip" | null
+  >(null);
+  const [message, setMessage] = useState("");
+  const run = async (
+    action: "retry" | "open_data_folder" | "export_recovery" | "skip",
+  ) => {
+    if (busy || !window.worklyDesktop?.legacyImportAction) return;
+    setBusy(action);
+    setMessage("");
+    try {
+      onStatusChange(await window.worklyDesktop.legacyImportAction(action));
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : language === "vi"
+            ? "Không thể hoàn tất thao tác khôi phục."
+            : "The recovery action could not be completed.",
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+  const detail =
+    status.status === "unsupported_version"
+      ? language === "vi"
+        ? `Dữ liệu được tạo bởi phiên bản chưa được hỗ trợ${status.version === undefined ? "." : ` (version ${String(status.version)}).`}`
+        : `The data was created by an unsupported version${status.version === undefined ? "." : ` (version ${String(status.version)}).`}`
+      : status.status === "invalid_data"
+        ? language === "vi"
+          ? "Tệp dữ liệu cũ không vượt qua kiểm tra tính toàn vẹn."
+          : "The older data file did not pass integrity validation."
+        : language === "vi"
+          ? "TimeFarm không thể đọc hoặc di chuyển tệp dữ liệu cũ."
+          : "TimeFarm could not read or move the older data file.";
+
+  return (
+    <main className="ownership-shell">
+      <section className="ownership-card load-failure-card">
+        <TimeFarmBrand />
+        <span className="eyebrow">
+          {language === "vi" ? "Khôi phục dữ liệu" : "Data recovery"}
+        </span>
+        <h1>
+          {language === "vi"
+            ? "Dữ liệu cũ cần được xử lý"
+            : "Older data needs attention"}
+        </h1>
+        <p>
+          {language === "vi"
+            ? "TimeFarm đã dừng trước khi tạo workspace mới để không làm mất đường khôi phục dữ liệu của bạn."
+            : "TimeFarm stopped before creating a new workspace so your recovery path stays intact."}
+        </p>
+        <div className="load-error-detail" role="alert">
+          <AlertTriangle size={17} /> {detail}
+        </div>
+        {message && (
+          <div className="form-error" role="alert" aria-live="assertive">
+            {message}
+          </div>
+        )}
+        <div className="ownership-actions">
+          <button
+            className="button primary full"
+            disabled={Boolean(busy)}
+            onClick={() => void run("retry")}
+          >
+            {busy === "retry" ? (
+              <LoaderCircle size={17} className="spin" />
+            ) : (
+              <RotateCcw size={17} />
+            )}{" "}
+            {language === "vi" ? "Thử nhập lại" : "Retry import"}
+          </button>
+          <button
+            className="button ghost full"
+            disabled={Boolean(busy)}
+            onClick={() => void run("export_recovery")}
+          >
+            <Download size={17} />
+            {language === "vi" ? "Xuất bản khôi phục" : "Export recovery copy"}
+          </button>
+          <button
+            className="button ghost full"
+            disabled={Boolean(busy)}
+            onClick={() => void run("open_data_folder")}
+          >
+            <FolderOpen size={17} />
+            {language === "vi" ? "Mở thư mục dữ liệu" : "Open data folder"}
+          </button>
+          <button
+            className="button danger-quiet full"
+            disabled={Boolean(busy)}
+            onClick={() => void run("skip")}
+          >
+            {language === "vi"
+              ? "Bỏ qua có xác nhận"
+              : "Explicitly skip import"}
+          </button>
+        </div>
+      </section>
+    </main>
+  );
+}
+
 function CloudBootstrapUnavailableScreen({
   language,
   message,
@@ -387,10 +588,7 @@ function CloudBootstrapUnavailableScreen({
   return (
     <main className="ownership-shell">
       <section className="ownership-card load-failure-card">
-        <div className="brand">
-          <span className="brand-mark">T</span>
-          <span>TimeFarm</span>
-        </div>
+        <TimeFarmBrand />
         <span className="eyebrow">
           {translate(language, "cloudBootstrap", "eyebrow")}
         </span>
@@ -435,10 +633,7 @@ function DataLoadFailure({
   return (
     <main className="ownership-shell">
       <section className="ownership-card load-failure-card">
-        <div className="brand">
-          <span className="brand-mark">T</span>
-          <span>TimeFarm</span>
-        </div>
+        <TimeFarmBrand />
         <span className="eyebrow">
           {translate(language, "dataLoad", "eyebrow")}
         </span>
@@ -523,11 +718,14 @@ function AuthenticationScreen({ language }: { language: AppLanguage }) {
   return (
     <main className="auth-shell">
       <section className="auth-brand-panel">
-        <div className="brand brand-large">
-          <span className="brand-mark">T</span>
-          <span>TimeFarm</span>
-        </div>
+        <TimeFarmBrand large />
         <div className="auth-brand-copy">
+          <img
+            className="auth-mascot"
+            src="./assets/timefarm-avatar.png"
+            alt=""
+            aria-hidden="true"
+          />
           <span className="eyebrow light">
             {translate(language, "authentication", "brandEyebrow")}
           </span>
@@ -702,15 +900,46 @@ function Onboarding({
   offlineMode: boolean;
   initialLanguage: AppLanguage;
 }) {
-  const { initializeAccount } = useAppStore();
+  const { initializeAccount } = useAppStoreActions();
   const [language, setLanguage] = useState<AppLanguage>(initialLanguage);
   const [name, setName] = useState(authUser?.displayName ?? "");
   const [country, setCountry] = useState("VN");
   const [currency, setCurrency] = useState<CurrencyCode>("VND");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const submitInFlightRef = useRef(false);
 
-  const submit = (event: FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
-    void initializeAccount({ displayName: name, country, language, currency });
+    if (submitInFlightRef.current) return;
+    submitInFlightRef.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await initializeAccount({
+        displayName: name,
+        country,
+        language,
+        currency,
+      });
+      if (!result.ok)
+        setError(
+          language === "vi"
+            ? `Không thể tạo workspace. ${result.message}`
+            : `The workspace could not be created. ${result.message}`,
+        );
+    } catch (submitError) {
+      setError(
+        submitError instanceof Error
+          ? submitError.message
+          : language === "vi"
+            ? "Không thể tạo workspace. Vui lòng thử lại."
+            : "The workspace could not be created. Please try again.",
+      );
+    } finally {
+      submitInFlightRef.current = false;
+      setBusy(false);
+    }
   };
 
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
@@ -720,10 +949,7 @@ function Onboarding({
   return (
     <main className="onboarding-shell">
       <section className="onboarding-art" aria-hidden="true">
-        <div className="brand brand-large">
-          <span className="brand-mark">T</span>
-          <span>TimeFarm</span>
-        </div>
+        <TimeFarmBrand large />
         <div className="orb orb-one" />
         <div className="orb orb-two" />
         <div className="onboarding-copy">
@@ -759,6 +985,7 @@ function Onboarding({
           >
             <button
               type="button"
+              disabled={busy}
               className={language === "vi" ? "selected" : ""}
               onClick={() => setLanguage("vi")}
             >
@@ -766,6 +993,7 @@ function Onboarding({
             </button>
             <button
               type="button"
+              disabled={busy}
               className={language === "en" ? "selected" : ""}
               onClick={() => setLanguage("en")}
             >
@@ -782,6 +1010,8 @@ function Onboarding({
           <Field label={translate(language, "onboarding", "nameLabel")}>
             <input
               autoFocus
+              disabled={busy}
+              required
               value={name}
               onChange={(event) => setName(event.target.value)}
               placeholder={translate(language, "onboarding", "namePlaceholder")}
@@ -791,6 +1021,7 @@ function Onboarding({
             <Field label={translate(language, "onboarding", "countryLabel")}>
               <select
                 value={country}
+                disabled={busy}
                 onChange={(event) => setCountry(event.target.value)}
               >
                 <option value="VN">
@@ -813,6 +1044,7 @@ function Onboarding({
             <Field label={translate(language, "onboarding", "currencyLabel")}>
               <select
                 value={currency}
+                disabled={busy}
                 onChange={(event) =>
                   setCurrency(event.target.value as CurrencyCode)
                 }
@@ -829,8 +1061,22 @@ function Onboarding({
             <Globe2 size={15} />{" "}
             {translate(language, "onboarding", "timezoneHint", { timezone })}
           </p>
-          <button className="button primary full" type="submit">
-            {translate(language, "onboarding", "enterWorkspace")}{" "}
+          {error && (
+            <p className="form-error" role="alert" aria-live="assertive">
+              {error}
+            </p>
+          )}
+          <button
+            className="button start-action full"
+            type="submit"
+            disabled={busy}
+          >
+            {busy && <LoaderCircle size={17} className="spin" />}
+            {busy
+              ? language === "vi"
+                ? "Đang tạo workspace…"
+                : "Creating workspace…"
+              : translate(language, "onboarding", "enterWorkspace")}{" "}
             <ChevronRight size={18} />
           </button>
           <p className="auth-note">
@@ -895,10 +1141,7 @@ function ClaimLocalAccountScreen() {
   return (
     <main className="ownership-shell">
       <section className="ownership-card">
-        <div className="brand">
-          <span className="brand-mark">T</span>
-          <span>TimeFarm</span>
-        </div>
+        <TimeFarmBrand />
         <span className="eyebrow">
           {translate(language, "ownership", "claimEyebrow")}
         </span>
@@ -1003,10 +1246,7 @@ function AccountMismatchScreen() {
   return (
     <main className="ownership-shell">
       <section className="ownership-card">
-        <div className="brand">
-          <span className="brand-mark">T</span>
-          <span>TimeFarm</span>
-        </div>
+        <TimeFarmBrand />
         <span className="eyebrow">
           {translate(language, "ownership", "mismatchEyebrow")}
         </span>
@@ -1163,10 +1403,7 @@ function Workspace() {
         {language === "vi" ? "Bỏ qua điều hướng" : "Skip navigation"}
       </a>
       <aside className="sidebar">
-        <div className="brand">
-          <span className="brand-mark">T</span>
-          <span>TimeFarm</span>
-        </div>
+        <TimeFarmBrand />
         <button
           className={`sidebar-start ${active ? "is-active" : ""}`}
           onClick={() =>
@@ -1462,7 +1699,7 @@ function SyncPill({
 }
 
 function SyncConflictsDialog({ onClose }: { onClose: () => void }) {
-  const { state } = useAppStore();
+  const { state } = useAppStoreState();
   const account = state!.account!;
   const language = account.language;
   const [conflicts, setConflicts] = useState<SyncConflict[]>([]);
@@ -1653,7 +1890,7 @@ function SyncConflictsDialog({ onClose }: { onClose: () => void }) {
 }
 
 function ThemeIcon() {
-  const { state } = useAppStore();
+  const { state } = useAppStoreState();
   return (
     <span className="theme-indicator" aria-hidden="true">
       {state?.preferences.theme === "dark" ? (
@@ -1672,7 +1909,7 @@ function ActiveStatus({
   session: WorkSession;
   language: AppLanguage;
 }) {
-  const { state } = useAppStore();
+  const { state } = useAppStoreState();
   const now = useCurrentTime();
   const project = state?.projects.find((item) => item.id === session.projectId);
   return (
@@ -1756,27 +1993,31 @@ function DashboardPage({
   const app = state!;
   const account = app.account!;
   const language = account.language;
+  const [timerAction, setTimerAction] = useState<"pause" | "resume" | null>(
+    null,
+  );
+  const [timerError, setTimerError] = useState("");
+  const timerActionInFlightRef = useRef(false);
   const now = useCurrentTime(true, 60_000);
   const active = getActiveSession(app.sessions);
   const at = now;
   const todayRange = currentDayRange(account.timezone, at);
-  const completedToday = rangeSummary(
+  const todaySummary = liveRangeSummary(
     app.sessions,
     account.currency,
     todayRange,
+    at,
   );
-  const activeToday = active
-    ? sessionContribution(active, todayRange)
-    : { activeMs: 0, earningsMinor: 0 };
-  const todayDuration = completedToday.activeMs + activeToday.activeMs;
-  const todayEarnings = completedToday.earningsMinor;
-  const todayRate = completedToday.effectiveHourlyMinor;
+  const todayDuration = todaySummary.activeMs;
+  const todayEarnings = todaySummary.earningsMinor;
+  const todayRate = todaySummary.effectiveHourlyMinor;
   const dashboardRange = resolveRange("7d", account.timezone, at);
   const series = rangeDailySeries(
     app.sessions,
     account.currency,
     dashboardRange,
     language,
+    at,
   );
   const breakdownRange = resolveRange("30d", account.timezone, at);
   const breakdown = projectBreakdown(
@@ -1793,6 +2034,7 @@ function DashboardPage({
     app.sessions,
     account.currency,
     dashboardRange,
+    at,
   );
   const rateSeries = series.map((point) => ({
     label: point.label,
@@ -1817,16 +2059,45 @@ function DashboardPage({
       timeZone: account.timezone,
     },
   ).format(new Date(at));
+  const mutateTimer = async (action: "pause" | "resume") => {
+    if (timerActionInFlightRef.current) return;
+    timerActionInFlightRef.current = true;
+    setTimerAction(action);
+    setTimerError("");
+    try {
+      const result =
+        action === "pause" ? await pauseSession() : await resumeSession();
+      if (!result.ok)
+        setTimerError(
+          language === "vi"
+            ? `Không thể ${action === "pause" ? "tạm dừng" : "tiếp tục"} timer. ${result.message}`
+            : result.message,
+        );
+    } catch (actionError) {
+      setTimerError(
+        actionError instanceof Error
+          ? actionError.message
+          : language === "vi"
+            ? "Không thể cập nhật timer. Vui lòng thử lại."
+            : "The timer could not be updated. Please try again.",
+      );
+    } finally {
+      timerActionInFlightRef.current = false;
+      setTimerAction(null);
+    }
+  };
   const widgets: Record<DashboardWidgetId, ReactNode> = {
     timer: (
       <TimerCard
         session={active}
         language={language}
         onStart={onStart}
-        onPause={pauseSession}
-        onResume={resumeSession}
+        onPause={() => mutateTimer("pause")}
+        onResume={() => mutateTimer("resume")}
         onComplete={onComplete}
         projects={app.projects}
+        pendingAction={timerAction}
+        mutationError={timerError}
       />
     ),
     goals: <GoalsCard onAdd={onAddGoal} onEdit={onEditGoal} />,
@@ -2005,7 +2276,7 @@ function DashboardPage({
             <MetricCard
               icon={<History />}
               label={label(language, "sessions")}
-              value={String(completedToday.sessionCount)}
+              value={String(todaySummary.sessionCount)}
               hint={language === "vi" ? "Đã hoàn tất" : "Completed today"}
               tone="orange"
             />
@@ -2061,14 +2332,18 @@ function TimerCard({
   onResume,
   onComplete,
   projects,
+  pendingAction,
+  mutationError,
 }: {
   session?: WorkSession;
   language: AppLanguage;
   onStart: () => void;
-  onPause: () => void;
-  onResume: () => void;
+  onPause: () => Promise<void>;
+  onResume: () => Promise<void>;
   onComplete: (session: WorkSession) => void;
   projects: Project[];
+  pendingAction: "pause" | "resume" | null;
+  mutationError: string;
 }) {
   const now = useCurrentTime(Boolean(session));
   const project = projects.find((item) => item.id === session?.projectId);
@@ -2099,8 +2374,13 @@ function TimerCard({
       </article>
     );
   const isPaused = session.status === "paused";
+  const elapsedMs = activeDurationMs(session, now);
+  const scaleProgress = Math.min(100, (elapsedMs / (4 * 3_600_000)) * 100);
   return (
-    <article className={`timer-card ${isPaused ? "paused" : ""}`}>
+    <article
+      className={`timer-card ${isPaused ? "paused" : ""}`}
+      aria-busy={pendingAction !== null}
+    >
       <div className="timer-summary">
         <span className="eyebrow">
           {isPaused
@@ -2120,9 +2400,7 @@ function TimerCard({
         </p>
       </div>
       <div className="timer-clock">
-        <span>
-          {formatDuration(activeDurationMs(session, now), true, language)}
-        </span>
+        <span>{formatTimerClock(elapsedMs)}</span>
         <small>
           {isPaused
             ? language === "vi"
@@ -2133,23 +2411,58 @@ function TimerCard({
               : "Tracking active time"}
         </small>
       </div>
+      <div className="timer-instrument-scale" aria-hidden="true">
+        <div
+          className="timer-instrument-fill"
+          style={{ width: `${scaleProgress}%` }}
+        />
+        <span>0h</span>
+        <span>1h</span>
+        <span>2h</span>
+        <span>3h</span>
+        <span>4h</span>
+      </div>
       <div className="timer-actions">
         {isPaused ? (
-          <button className="button primary" onClick={onResume}>
-            <Play size={16} fill="currentColor" /> {label(language, "resume")}
+          <button
+            className="button primary"
+            disabled={pendingAction !== null}
+            onClick={() => void onResume()}
+          >
+            {pendingAction === "resume" ? (
+              <LoaderCircle size={16} className="spin" />
+            ) : (
+              <Play size={16} fill="currentColor" />
+            )}{" "}
+            {label(language, "resume")}
           </button>
         ) : (
-          <button className="button ghost" onClick={onPause}>
-            <Pause size={16} fill="currentColor" /> {label(language, "pause")}
+          <button
+            className="button ghost"
+            disabled={pendingAction !== null}
+            onClick={() => void onPause()}
+          >
+            {pendingAction === "pause" ? (
+              <LoaderCircle size={16} className="spin" />
+            ) : (
+              <Pause size={16} fill="currentColor" />
+            )}{" "}
+            {label(language, "pause")}
           </button>
         )}
         <button
           className="button danger-quiet"
+          disabled={pendingAction !== null}
           onClick={() => onComplete(session)}
         >
           <Square size={15} fill="currentColor" /> {label(language, "stop")}
         </button>
       </div>
+      {mutationError && (
+        <p className="form-error" role="alert" aria-live="assertive">
+          {mutationError}
+        </p>
+      )}
     </article>
   );
 }
@@ -2166,18 +2479,42 @@ function GoalsCard({
   const account = app.account!;
   const language = account.language;
   const [error, setError] = useState("");
+  const [pendingGoalId, setPendingGoalId] = useState<string | null>(null);
+  const deleteInFlightRef = useRef(false);
   const removeGoal = async (goalId: string) => {
+    if (deleteInFlightRef.current) return;
     if (
       !window.confirm(
         language === "vi" ? "Xóa mục tiêu này?" : "Delete this goal?",
       )
     )
       return;
-    const result = await deleteGoal(goalId);
-    setError(result.ok ? "" : result.message);
+    deleteInFlightRef.current = true;
+    setPendingGoalId(goalId);
+    setError("");
+    try {
+      const result = await deleteGoal(goalId);
+      if (!result.ok)
+        setError(
+          language === "vi"
+            ? `Không thể xóa mục tiêu. ${result.message}`
+            : `The goal could not be deleted. ${result.message}`,
+        );
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : language === "vi"
+            ? "Không thể xóa mục tiêu. Vui lòng thử lại."
+            : "The goal could not be deleted. Please try again.",
+      );
+    } finally {
+      deleteInFlightRef.current = false;
+      setPendingGoalId(null);
+    }
   };
   return (
-    <article className="panel goals-card">
+    <article className="panel goals-card" aria-busy={pendingGoalId !== null}>
       <div className="panel-heading">
         <div>
           <h3>{language === "vi" ? "Mục tiêu" : "Goals"}</h3>
@@ -2187,7 +2524,12 @@ function GoalsCard({
               : "Based on actual progress"}
           </p>
         </div>
-        <button className="icon-button" onClick={onAdd} aria-label="Add goal">
+        <button
+          className="icon-button"
+          disabled={pendingGoalId !== null}
+          onClick={onAdd}
+          aria-label="Add goal"
+        >
           <Plus size={18} />
         </button>
       </div>
@@ -2202,7 +2544,11 @@ function GoalsCard({
               : "Set a small target to make progress visible."
           }
           action={
-            <button className="text-button" onClick={onAdd}>
+            <button
+              className="text-button"
+              disabled={pendingGoalId !== null}
+              onClick={onAdd}
+            >
               {language === "vi" ? "Tạo mục tiêu" : "Create goal"}
             </button>
           }
@@ -2215,6 +2561,8 @@ function GoalsCard({
               goal={goal}
               language={language}
               onEdit={() => onEdit(goal)}
+              disabled={pendingGoalId !== null}
+              deleting={pendingGoalId === goal.id}
               onDelete={() => {
                 void removeGoal(goal.id);
               }}
@@ -2222,7 +2570,11 @@ function GoalsCard({
           ))}
         </div>
       )}
-      {error && <p className="form-error">{error}</p>}
+      {error && (
+        <p className="form-error" role="alert" aria-live="assertive">
+          {error}
+        </p>
+      )}
     </article>
   );
 }
@@ -2232,13 +2584,17 @@ function GoalRow({
   language,
   onEdit,
   onDelete,
+  disabled,
+  deleting,
 }: {
   goal: Goal;
   language: AppLanguage;
   onEdit: () => void;
   onDelete: () => void;
+  disabled: boolean;
+  deleting: boolean;
 }) {
-  const { state } = useAppStore();
+  const { state } = useAppStoreState();
   const app = state!;
   const account = app.account!;
   const progress = calculateGoalProgress(
@@ -2272,6 +2628,7 @@ function GoalRow({
           <button
             type="button"
             className="text-button"
+            disabled={disabled}
             onClick={onEdit}
             aria-label={language === "vi" ? "Chỉnh sửa mục tiêu" : "Edit goal"}
           >
@@ -2280,10 +2637,15 @@ function GoalRow({
           <button
             type="button"
             className="mini-remove"
+            disabled={disabled}
             onClick={onDelete}
             aria-label="Delete goal"
           >
-            <X size={13} />
+            {deleting ? (
+              <LoaderCircle size={13} className="spin" />
+            ) : (
+              <X size={13} />
+            )}
           </button>
         </span>
       </div>
@@ -2305,39 +2667,71 @@ function GoalRow({
   );
 }
 
-function DashboardCustomizeDialog({ onClose }: { onClose: () => void }) {
+export function DashboardCustomizeDialog({ onClose }: { onClose: () => void }) {
   const { state, updatePreferences } = useAppStore();
   const app = state!;
   const language = app.account!.language;
+  const mutationInFlightRef = useRef(false);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
   const order = normalizedDashboardOrder(app.preferences.dashboardWidgetOrder);
   const movableOrder = order.filter(
     (id): id is Exclude<DashboardWidgetId, "timer"> => id !== "timer",
   );
   const hidden = new Set(app.preferences.dashboardHiddenWidgets);
-  const move = (id: Exclude<DashboardWidgetId, "timer">, direction: -1 | 1) => {
+  const persist = async (partial: Partial<Preferences>) => {
+    if (mutationInFlightRef.current) return;
+    mutationInFlightRef.current = true;
+    setPending(true);
+    setError("");
+    try {
+      const result = await updatePreferences(partial);
+      if (!result.ok)
+        setError(
+          language === "vi"
+            ? `Không thể lưu bố cục dashboard. ${result.message}`
+            : `The dashboard layout could not be saved. ${result.message}`,
+        );
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : language === "vi"
+            ? "Không thể lưu bố cục dashboard. Vui lòng thử lại."
+            : "The dashboard layout could not be saved. Please try again.",
+      );
+    } finally {
+      mutationInFlightRef.current = false;
+      setPending(false);
+    }
+  };
+  const move = async (
+    id: Exclude<DashboardWidgetId, "timer">,
+    direction: -1 | 1,
+  ) => {
     const index = movableOrder.indexOf(id);
     const target = index + direction;
     if (target < 0 || target >= movableOrder.length) return;
     const next = [...movableOrder];
     [next[index], next[target]] = [next[target], next[index]];
-    void updatePreferences({ dashboardWidgetOrder: ["timer", ...next] });
+    await persist({ dashboardWidgetOrder: ["timer", ...next] });
   };
-  const toggle = (id: DashboardWidgetId) => {
+  const toggle = async (id: DashboardWidgetId) => {
     const next = new Set(hidden);
     if (next.has(id)) next.delete(id);
     else next.add(id);
-    void updatePreferences({ dashboardHiddenWidgets: [...next] });
+    await persist({ dashboardHiddenWidgets: [...next] });
   };
-  const setSize = (id: DashboardWidgetId, size: DashboardWidgetSize) => {
-    void updatePreferences({
+  const setSize = async (id: DashboardWidgetId, size: DashboardWidgetSize) => {
+    await persist({
       dashboardWidgetSizes: {
         ...app.preferences.dashboardWidgetSizes,
         [id]: size,
       },
     });
   };
-  const reset = () => {
-    void updatePreferences({
+  const reset = async () => {
+    await persist({
       dashboardHiddenWidgets: [],
       dashboardWidgetOrder: [...dashboardWidgetOrder],
       dashboardWidgetSizes: {},
@@ -2352,15 +2746,17 @@ function DashboardCustomizeDialog({ onClose }: { onClose: () => void }) {
           : "The timer is a fixed priority area. Analysis widgets can be reordered, resized, and hidden."
       }
       onClose={onClose}
+      locked={pending}
     >
-      <div className="dashboard-customize-list">
+      <div className="dashboard-customize-list" aria-busy={pending}>
         <div className="dashboard-customize-row fixed-widget-row">
           <label>
             <input
               data-autofocus
               type="checkbox"
+              disabled={pending}
               checked={!hidden.has("timer")}
-              onChange={() => toggle("timer")}
+              onChange={() => void toggle("timer")}
             />
             <span>{dashboardWidgetLabels.timer[language]}</span>
           </label>
@@ -2373,8 +2769,9 @@ function DashboardCustomizeDialog({ onClose }: { onClose: () => void }) {
             <label>
               <input
                 type="checkbox"
+                disabled={pending}
                 checked={!hidden.has(id)}
-                onChange={() => toggle(id)}
+                onChange={() => void toggle(id)}
               />
               <span>{dashboardWidgetLabels[id][language]}</span>
             </label>
@@ -2382,8 +2779,8 @@ function DashboardCustomizeDialog({ onClose }: { onClose: () => void }) {
               <button
                 className="icon-button"
                 type="button"
-                disabled={index === 0}
-                onClick={() => move(id, -1)}
+                disabled={pending || index === 0}
+                onClick={() => void move(id, -1)}
                 aria-label={
                   language === "vi" ? "Di chuyển widget lên" : "Move widget up"
                 }
@@ -2393,8 +2790,8 @@ function DashboardCustomizeDialog({ onClose }: { onClose: () => void }) {
               <button
                 className="icon-button"
                 type="button"
-                disabled={index === movableOrder.length - 1}
-                onClick={() => move(id, 1)}
+                disabled={pending || index === movableOrder.length - 1}
+                onClick={() => void move(id, 1)}
                 aria-label={
                   language === "vi"
                     ? "Di chuyển widget xuống"
@@ -2404,12 +2801,13 @@ function DashboardCustomizeDialog({ onClose }: { onClose: () => void }) {
                 ↓
               </button>
               <select
+                disabled={pending}
                 value={
                   app.preferences.dashboardWidgetSizes[id] ??
                   dashboardDefaultSizes[id]
                 }
                 onChange={(event) =>
-                  setSize(id, event.target.value as DashboardWidgetSize)
+                  void setSize(id, event.target.value as DashboardWidgetSize)
                 }
                 aria-label={
                   language === "vi" ? "Kích thước widget" : "Widget size"
@@ -2429,12 +2827,35 @@ function DashboardCustomizeDialog({ onClose }: { onClose: () => void }) {
           </div>
         ))}
       </div>
+      {error && (
+        <p className="form-error" role="alert" aria-live="assertive">
+          {error}
+        </p>
+      )}
+      {pending && (
+        <p className="form-hint" role="status" aria-live="polite">
+          <LoaderCircle size={15} className="spin" />{" "}
+          {language === "vi"
+            ? "Đang lưu bố cục dashboard…"
+            : "Saving dashboard layout…"}
+        </p>
+      )}
       <div className="modal-actions">
-        <button className="button ghost" type="button" onClick={reset}>
+        <button
+          className="button ghost"
+          type="button"
+          disabled={pending}
+          onClick={() => void reset()}
+        >
           <RotateCcw size={16} />{" "}
           {language === "vi" ? "Khôi phục mặc định" : "Reset defaults"}
         </button>
-        <button className="button primary" type="button" onClick={onClose}>
+        <button
+          className="button primary"
+          type="button"
+          disabled={pending}
+          onClick={onClose}
+        >
           <Check size={16} /> {language === "vi" ? "Xong" : "Done"}
         </button>
       </div>
@@ -2455,16 +2876,77 @@ function ProjectsPage({
   const app = state!;
   const language = app.account!.language;
   const [filter, setFilter] = useState<"all" | ProjectStatus>("all");
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
+    null,
+  );
+  const [pendingProjectAction, setPendingProjectAction] = useState<{
+    projectId: string;
+    action: "start" | "status";
+  } | null>(null);
+  const [mutationError, setMutationError] = useState("");
+  const projectMutationInFlightRef = useRef(false);
+  const sessionsByProject = useMemo(() => {
+    const grouped = new Map<string, WorkSession[]>();
+    for (const session of app.sessions) {
+      if (!session.projectId) continue;
+      const existing = grouped.get(session.projectId);
+      if (existing) existing.push(session);
+      else grouped.set(session.projectId, [session]);
+    }
+    return grouped;
+  }, [app.sessions]);
+  const paymentsByProject = useMemo(() => {
+    const grouped = new Map<string, Payment[]>();
+    for (const payment of app.payments) {
+      const existing = grouped.get(payment.projectId);
+      if (existing) existing.push(payment);
+      else grouped.set(payment.projectId, [payment]);
+    }
+    return grouped;
+  }, [app.payments]);
   const projects = app.projects.filter(
     (project) => filter === "all" || project.status === filter,
   );
+  const selectedProject = app.projects.find(
+    (project) => project.id === selectedProjectId,
+  );
+  const runProjectMutation = async (
+    project: Project,
+    action: "start" | "status",
+    mutation: () => Promise<ActionResult>,
+  ) => {
+    if (projectMutationInFlightRef.current) return;
+    projectMutationInFlightRef.current = true;
+    setPendingProjectAction({ projectId: project.id, action });
+    setMutationError("");
+    try {
+      const result = await mutation();
+      if (!result.ok)
+        setMutationError(
+          language === "vi"
+            ? `Không thể cập nhật dự án “${project.name}”. ${result.message}`
+            : `Project “${project.name}” could not be updated. ${result.message}`,
+        );
+    } catch (mutationFailure) {
+      setMutationError(
+        mutationFailure instanceof Error
+          ? mutationFailure.message
+          : language === "vi"
+            ? `Không thể cập nhật dự án “${project.name}”. Vui lòng thử lại.`
+            : `Project “${project.name}” could not be updated. Please try again.`,
+      );
+    } finally {
+      projectMutationInFlightRef.current = false;
+      setPendingProjectAction(null);
+    }
+  };
   const startProject = async (project: Project) => {
-    const result = await startSession(project.id);
-    if (!result.ok) window.alert(result.message);
+    await runProjectMutation(project, "start", () => startSession(project.id));
   };
   const setStatus = async (project: Project, status: ProjectStatus) => {
-    const result = await setProjectStatus(project.id, status);
-    if (!result.ok) window.alert(result.message);
+    await runProjectMutation(project, "status", () =>
+      setProjectStatus(project.id, status),
+    );
   };
   return (
     <>
@@ -2480,7 +2962,11 @@ function ProjectsPage({
               : "Every session can belong to a project — but never has to."}
           </p>
         </div>
-        <button className="button primary" onClick={onNew}>
+        <button
+          className="button primary"
+          disabled={pendingProjectAction !== null}
+          onClick={onNew}
+        >
           <Plus size={18} /> {language === "vi" ? "Dự án mới" : "New project"}
         </button>
       </div>
@@ -2509,26 +2995,44 @@ function ProjectsPage({
               : "Create your first project or start an unassigned session."
           }
           action={
-            <button className="button primary" onClick={onNew}>
+            <button
+              className="button primary"
+              disabled={pendingProjectAction !== null}
+              onClick={onNew}
+            >
               <Plus size={17} />{" "}
               {language === "vi" ? "Tạo dự án" : "Create project"}
             </button>
           }
         />
       ) : (
-        <div className="project-grid">
+        <div
+          className="project-grid project-ledger"
+          aria-busy={pendingProjectAction !== null}
+        >
+          <div className="project-ledger-head" aria-hidden="true">
+            <span>{language === "vi" ? "Dự án" : "Project"}</span>
+            <span>{language === "vi" ? "Trạng thái" : "Status"}</span>
+            <span>{language === "vi" ? "Phiên" : "Sessions"}</span>
+            <span>{language === "vi" ? "Giá trị" : "Value"}</span>
+            <span>{language === "vi" ? "Đã nhận" : "Received"}</span>
+            <span>{language === "vi" ? "Thao tác" : "Actions"}</span>
+          </div>
           {projects.map((project) => {
-            const payments = app.payments.filter(
-              (payment) => payment.projectId === project.id,
-            );
+            const payments = paymentsByProject.get(project.id) ?? [];
+            const relatedSessions = sessionsByProject.get(project.id) ?? [];
             const received = groupedMoney(
               payments.map((payment) => payment.money),
             )
               .map((money) => formatMoney(money, language))
               .join(" · ");
             return (
-              <article className="project-card" key={project.id}>
-                <div className="project-card-head">
+              <article
+                className="project-card"
+                key={project.id}
+                aria-busy={pendingProjectAction?.projectId === project.id}
+              >
+                <div className="project-ledger-identity">
                   <span
                     className="project-icon"
                     style={{
@@ -2538,34 +3042,58 @@ function ProjectsPage({
                   >
                     <ProjectGlyph icon={project.icon} />
                   </span>
+                  <div>
+                    <h3>{project.name}</h3>
+                    <p>{paymentModelLabels[project.paymentModel][language]}</p>
+                  </div>
+                </div>
+                <div className="project-card-head">
                   <span className={`status-badge ${project.status}`}>
                     {label(language, project.status)}
                   </span>
+                  {pendingProjectAction?.projectId === project.id && (
+                    <LoaderCircle size={15} className="spin" />
+                  )}
                 </div>
-                <h3>{project.name}</h3>
-                <p>{paymentModelLabels[project.paymentModel][language]}</p>
-                {project.note && <p className="project-note">{project.note}</p>}
-                {project.expectedMoney && (
-                  <strong className="project-money">
-                    {formatMoney(project.expectedMoney, language)}
+                <div className="project-ledger-fact">
+                  <strong>{relatedSessions.length}</strong>
+                  <span>{language === "vi" ? "phiên" : "sessions"}</span>
+                </div>
+                <div className="project-ledger-fact">
+                  <strong>
+                    {project.expectedMoney
+                      ? formatMoney(project.expectedMoney, language)
+                      : "—"}
                   </strong>
-                )}
-                <small className="project-payment-summary">
-                  {payments.length === 0
-                    ? language === "vi"
-                      ? "Chưa ghi nhận thanh toán"
-                      : "No payments recorded"
-                    : `${payments.length} ${language === "vi" ? "khoản thanh toán" : "payments"} · ${received}`}
-                </small>
+                  <span>{language === "vi" ? "dự kiến" : "expected"}</span>
+                </div>
+                <div className="project-ledger-fact project-payment-summary">
+                  <strong>{received || "—"}</strong>
+                  <span>
+                    {payments.length === 0
+                      ? language === "vi"
+                        ? "chưa có thanh toán"
+                        : "no payments"
+                      : `${payments.length} ${language === "vi" ? "khoản" : "payments"}`}
+                  </span>
+                </div>
                 <div className="project-card-footer">
                   <button
+                    className="text-button project-detail-trigger"
+                    onClick={() => setSelectedProjectId(project.id)}
+                  >
+                    {language === "vi" ? "Xem chi tiết" : "View details"}
+                  </button>
+                  <button
                     className="text-button"
+                    disabled={pendingProjectAction !== null}
                     onClick={() => onEdit(project)}
                   >
                     {label(language, "edit")}
                   </button>
                   <button
                     className="text-button"
+                    disabled={pendingProjectAction !== null}
                     onClick={() => onRecordPayment(project)}
                   >
                     {language === "vi" ? "Ghi nhận tiền" : "Record payment"}
@@ -2573,7 +3101,8 @@ function ProjectsPage({
                   {project.status === "completed" ? (
                     <button
                       className="text-button"
-                      onClick={() => setStatus(project, "active")}
+                      disabled={pendingProjectAction !== null}
+                      onClick={() => void setStatus(project, "active")}
                     >
                       {language === "vi" ? "Mở lại" : "Reopen"}
                     </button>
@@ -2581,8 +3110,9 @@ function ProjectsPage({
                     <>
                       <button
                         className="text-button"
+                        disabled={pendingProjectAction !== null}
                         onClick={() =>
-                          setStatus(
+                          void setStatus(
                             project,
                             project.status === "active" ? "paused" : "active",
                           )
@@ -2594,20 +3124,27 @@ function ProjectsPage({
                       </button>
                       <button
                         className="text-button"
-                        onClick={() => setStatus(project, "completed")}
+                        disabled={pendingProjectAction !== null}
+                        onClick={() => void setStatus(project, "completed")}
                       >
                         {language === "vi" ? "Hoàn tất" : "Complete"}
                       </button>
                       <button
                         className="icon-button colored"
+                        disabled={pendingProjectAction !== null}
                         aria-label={
                           language === "vi"
                             ? `Bắt đầu dự án ${project.name}`
                             : `Start ${project.name}`
                         }
-                        onClick={() => startProject(project)}
+                        onClick={() => void startProject(project)}
                       >
-                        <Play size={16} fill="currentColor" />
+                        {pendingProjectAction?.projectId === project.id &&
+                        pendingProjectAction.action === "start" ? (
+                          <LoaderCircle size={16} className="spin" />
+                        ) : (
+                          <Play size={16} fill="currentColor" />
+                        )}
                       </button>
                     </>
                   )}
@@ -2617,12 +3154,233 @@ function ProjectsPage({
           })}
         </div>
       )}
+      {selectedProject && (
+        <ProjectDetailPanel
+          project={selectedProject}
+          sessions={sessionsByProject.get(selectedProject.id) ?? []}
+          payments={paymentsByProject.get(selectedProject.id) ?? []}
+          language={language}
+          timezone={app.account!.timezone}
+          busy={pendingProjectAction !== null}
+          onClose={() => setSelectedProjectId(null)}
+          onEdit={() => onEdit(selectedProject)}
+          onRecordPayment={() => onRecordPayment(selectedProject)}
+          onStart={() => void startProject(selectedProject)}
+        />
+      )}
+      {mutationError && (
+        <p className="form-error" role="alert" aria-live="assertive">
+          {mutationError}
+        </p>
+      )}
     </>
   );
 }
 
+function ProjectDetailPanel({
+  project,
+  sessions,
+  payments,
+  language,
+  timezone,
+  busy,
+  onClose,
+  onEdit,
+  onRecordPayment,
+  onStart,
+}: {
+  project: Project;
+  sessions: WorkSession[];
+  payments: Payment[];
+  language: AppLanguage;
+  timezone: string;
+  busy: boolean;
+  onClose: () => void;
+  onEdit: () => void;
+  onRecordPayment: () => void;
+  onStart: () => void;
+}) {
+  const recentSessions = [...sessions]
+    .sort(
+      (left, right) =>
+        new Date(right.endedAt ?? right.startedAt).getTime() -
+        new Date(left.endedAt ?? left.startedAt).getTime(),
+    )
+    .slice(0, 5);
+  const recentPayments = [...payments]
+    .sort(
+      (left, right) =>
+        new Date(right.receivedAt).getTime() -
+        new Date(left.receivedAt).getTime(),
+    )
+    .slice(0, 5);
+
+  return (
+    <section
+      className="project-detail-panel"
+      aria-labelledby={`project-detail-${project.id}`}
+    >
+      <header className="project-detail-heading">
+        <div className="project-detail-title">
+          <span
+            className="project-icon"
+            style={{
+              background: `${project.color}1e`,
+              color: project.color,
+            }}
+          >
+            <ProjectGlyph icon={project.icon} />
+          </span>
+          <div>
+            <span className="eyebrow">
+              {language === "vi" ? "HỒ SƠ DỰ ÁN" : "PROJECT RECORD"}
+            </span>
+            <h2 id={`project-detail-${project.id}`}>{project.name}</h2>
+            <p>{paymentModelLabels[project.paymentModel][language]}</p>
+          </div>
+        </div>
+        <div className="project-detail-actions">
+          {project.status !== "completed" && (
+            <button
+              className="button start-action compact"
+              disabled={busy}
+              onClick={onStart}
+            >
+              <Play size={15} fill="currentColor" />
+              {language === "vi" ? "Bắt đầu" : "Start"}
+            </button>
+          )}
+          <button
+            className="button ghost compact"
+            disabled={busy}
+            onClick={onEdit}
+          >
+            {label(language, "edit")}
+          </button>
+          <button
+            className="icon-button"
+            aria-label={
+              language === "vi"
+                ? "Đóng chi tiết dự án"
+                : "Close project details"
+            }
+            onClick={onClose}
+          >
+            <X size={17} />
+          </button>
+        </div>
+      </header>
+
+      <div className="project-detail-facts">
+        <div>
+          <span>{language === "vi" ? "Trạng thái" : "Status"}</span>
+          <strong className={`status-badge ${project.status}`}>
+            {label(language, project.status)}
+          </strong>
+        </div>
+        <div>
+          <span>
+            {language === "vi" ? "Phiên đã ghi" : "Recorded sessions"}
+          </span>
+          <strong>{sessions.length}</strong>
+        </div>
+        <div>
+          <span>
+            {language === "vi" ? "Giá trị dự kiến" : "Expected value"}
+          </span>
+          <strong>{formatMoney(project.expectedMoney, language)}</strong>
+        </div>
+        <div>
+          <span>{language === "vi" ? "Thanh toán" : "Payments"}</span>
+          <strong>{payments.length}</strong>
+        </div>
+      </div>
+
+      {project.note && <p className="project-detail-note">{project.note}</p>}
+
+      <div className="project-detail-ledgers">
+        <section aria-labelledby={`project-sessions-${project.id}`}>
+          <div className="ledger-section-heading">
+            <h3 id={`project-sessions-${project.id}`}>
+              {language === "vi" ? "Phiên gần đây" : "Recent sessions"}
+            </h3>
+            <span>{recentSessions.length}</span>
+          </div>
+          {recentSessions.length === 0 ? (
+            <p className="ledger-empty">
+              {language === "vi"
+                ? "Chưa có thời gian được ghi cho dự án này."
+                : "No time has been recorded for this project yet."}
+            </p>
+          ) : (
+            <div className="project-detail-list">
+              {recentSessions.map((session) => (
+                <div key={session.id}>
+                  <span>
+                    {formatDate(
+                      session.endedAt ?? session.startedAt,
+                      language,
+                      session.timezone,
+                    )}
+                  </span>
+                  <strong>
+                    {formatDuration(activeDurationMs(session), true, language)}
+                  </strong>
+                  <strong>{formatMoney(session.earnings, language)}</strong>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section aria-labelledby={`project-payments-${project.id}`}>
+          <div className="ledger-section-heading">
+            <h3 id={`project-payments-${project.id}`}>
+              {language === "vi" ? "Sổ thanh toán" : "Payment ledger"}
+            </h3>
+            <button
+              className="text-button"
+              disabled={busy}
+              onClick={onRecordPayment}
+            >
+              {language === "vi" ? "Ghi nhận tiền" : "Record payment"}
+            </button>
+          </div>
+          {recentPayments.length === 0 ? (
+            <p className="ledger-empty">
+              {language === "vi"
+                ? "Chưa có khoản thanh toán nào."
+                : "No payments have been recorded."}
+            </p>
+          ) : (
+            <div className="project-detail-list">
+              {recentPayments.map((payment) => (
+                <div key={payment.id}>
+                  <span>
+                    {formatDate(payment.receivedAt, language, timezone)}
+                  </span>
+                  <span>
+                    {payment.kind === "completion"
+                      ? language === "vi"
+                        ? "Hoàn tất"
+                        : "Completion"
+                      : language === "vi"
+                        ? "Theo tiến độ"
+                        : "Progressive"}
+                  </span>
+                  <strong>{formatMoney(payment.money, language)}</strong>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+    </section>
+  );
+}
+
 function HistoryPage({ onEdit }: { onEdit: (session: WorkSession) => void }) {
-  const { state } = useAppStore();
+  const { state } = useAppStoreState();
   const app = state!;
   const language = app.account!.language;
   const [query, setQuery] = useState("");
@@ -2755,6 +3513,14 @@ function HistoryPage({ onEdit }: { onEdit: (session: WorkSession) => void }) {
       ) : (
         <>
           <div className="history-list">
+            <div className="history-list-head" aria-hidden="true">
+              <span>{language === "vi" ? "Ngày / giờ" : "Date / time"}</span>
+              <span>{language === "vi" ? "Dự án" : "Project"}</span>
+              <span>{language === "vi" ? "Thời lượng" : "Duration"}</span>
+              <span>{language === "vi" ? "Thu nhập" : "Earnings"}</span>
+              <span>{language === "vi" ? "Ghi chú" : "Note"}</span>
+              <span>{language === "vi" ? "Thao tác" : "Action"}</span>
+            </div>
             {pagedSessions.map((session) => (
               <SessionRow
                 key={session.id}
@@ -2811,7 +3577,7 @@ function SessionRow({
   canEdit: boolean;
   onEdit: () => void;
 }) {
-  const { state } = useAppStore();
+  const { state } = useAppStoreState();
   const app = state!;
   const language = app.account!.language;
   const project = app.projects.find((item) => item.id === session.projectId);

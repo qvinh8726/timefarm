@@ -20,7 +20,7 @@ import { formatMoney } from "../domain/money";
 import { formatClockTime, formatDate, formatDuration } from "../domain/time";
 import type { AppLanguage, CurrencyCode } from "../domain/types";
 import { translate } from "../i18n";
-import { useAppStore } from "../lib/state";
+import { useAppStoreState } from "../lib/state";
 
 export function MetricCard({
   icon,
@@ -266,7 +266,7 @@ export function ProjectBreakdownCard({
   subtitle?: string;
   mode?: "time" | "earnings";
 }) {
-  const { state } = useAppStore();
+  const { state } = useAppStoreState();
   const projects = state!.projects;
   const isEarnings = mode === "earnings";
   const max = Math.max(

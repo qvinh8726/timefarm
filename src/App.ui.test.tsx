@@ -1,15 +1,86 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import axe from "axe-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { App, Modal } from "./App";
-import { createEmptyState } from "./domain/types";
+import { App, DashboardCustomizeDialog, Modal } from "./App";
+import { RecoveryDialog } from "./components/WorkspaceDialogs";
+import {
+  createEmptyState,
+  type AppState,
+  type WorkSession,
+} from "./domain/types";
 import { AuthProvider } from "./lib/auth";
-import { AppStoreProvider } from "./lib/state";
+import { AppStoreProvider, useAppStore } from "./lib/state";
+
+function readyState(): AppState {
+  const state = createEmptyState();
+  state.account = {
+    id: "account-1",
+    displayName: "Minh",
+    country: "VN",
+    language: "en",
+    currency: "VND",
+    timezone: "Asia/Saigon",
+    createdAt: "2026-08-12T00:00:00.000Z",
+  };
+  return state;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function DashboardCustomizeHarness() {
+  const { state } = useAppStore();
+  return state ? <DashboardCustomizeDialog onClose={() => {}} /> : null;
+}
+
+function RecoveryHarness({
+  session,
+  onContinue,
+  onComplete,
+}: {
+  session: WorkSession;
+  onContinue: () => void;
+  onComplete: (endedAt?: string) => void;
+}) {
+  const { state } = useAppStore();
+  return state ? (
+    <RecoveryDialog
+      session={session}
+      onContinue={onContinue}
+      onComplete={onComplete}
+    />
+  ) : null;
+}
+
+const recoverySession: WorkSession = {
+  id: "session-1",
+  startedAt: "2026-08-10T08:00:00.000Z",
+  timezone: "Asia/Saigon",
+  pauses: [],
+  status: "running",
+  createdAt: "2026-08-10T08:00:00.000Z",
+  updatedAt: "2026-08-10T08:00:00.000Z",
+  syncStatus: "queued",
+};
 
 afterEach(() => {
+  cleanup();
   delete window.worklyDesktop;
 });
 
@@ -68,6 +139,119 @@ describe("Modal accessibility", () => {
   });
 });
 
+describe("mutation feedback and serialization", () => {
+  it("serializes dashboard preference writes and exposes a failed ActionResult", async () => {
+    const state = readyState();
+    const command = deferred<never>();
+    const executeCommand = vi.fn(() => command.promise);
+    window.worklyDesktop = {
+      loadState: vi.fn().mockResolvedValue(state),
+      executeCommand,
+      onStateChanged: vi.fn(() => () => {}),
+    } as unknown as NonNullable<Window["worklyDesktop"]>;
+
+    render(
+      <AppStoreProvider>
+        <DashboardCustomizeHarness />
+      </AppStoreProvider>,
+    );
+
+    const goals = await screen.findByRole("checkbox", { name: "Goals" });
+    fireEvent.click(goals);
+    fireEvent.click(goals);
+
+    await waitFor(() => expect(executeCommand).toHaveBeenCalledOnce());
+    expect(goals).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Reset defaults" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Done" })).toBeDisabled();
+
+    command.reject(new Error("disk busy"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("disk busy");
+    await waitFor(() => expect(goals).toBeEnabled());
+    expect(executeCommand).toHaveBeenCalledOnce();
+  });
+
+  it("locks every recovery action while acquiring the timer lease", async () => {
+    const lease = deferred<TimerLeaseStatus>();
+    const acquireTimerLease = vi.fn(() => lease.promise);
+    window.worklyDesktop = {
+      loadState: vi.fn().mockResolvedValue(readyState()),
+      getTimerLeaseStatus: vi
+        .fn()
+        .mockResolvedValue({ state: "not_configured" }),
+      acquireTimerLease,
+      onTimerLeaseChanged: vi.fn(() => () => {}),
+      onStateChanged: vi.fn(() => () => {}),
+    } as unknown as NonNullable<Window["worklyDesktop"]>;
+    const onContinue = vi.fn();
+
+    render(
+      <AppStoreProvider>
+        <RecoveryHarness
+          session={recoverySession}
+          onContinue={onContinue}
+          onComplete={() => {}}
+        />
+      </AppStoreProvider>,
+    );
+
+    const continueButton = await screen.findByRole("button", {
+      name: "Continue session",
+    });
+    fireEvent.click(continueButton);
+    fireEvent.click(continueButton);
+
+    await waitFor(() => expect(acquireTimerLease).toHaveBeenCalledOnce());
+    expect(continueButton).toBeDisabled();
+    expect(screen.getByRole("button", { name: "End now" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Use this time" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Discard session" }),
+    ).toBeDisabled();
+    expect(screen.getByLabelText("Or end at (device timezone)")).toBeDisabled();
+
+    lease.resolve({ state: "acquired" });
+    await waitFor(() => expect(onContinue).toHaveBeenCalledOnce());
+  });
+
+  it("rejects a recovery end timestamp in the future before completing", async () => {
+    window.worklyDesktop = {
+      loadState: vi.fn().mockResolvedValue(readyState()),
+      getTimerLeaseStatus: vi
+        .fn()
+        .mockResolvedValue({ state: "not_configured" }),
+      onTimerLeaseChanged: vi.fn(() => () => {}),
+      onStateChanged: vi.fn(() => () => {}),
+    } as unknown as NonNullable<Window["worklyDesktop"]>;
+    const onComplete = vi.fn();
+
+    render(
+      <AppStoreProvider>
+        <RecoveryHarness
+          session={recoverySession}
+          onContinue={() => {}}
+          onComplete={onComplete}
+        />
+      </AppStoreProvider>,
+    );
+
+    const endInput = await screen.findByLabelText(
+      "Or end at (device timezone)",
+    );
+    fireEvent.change(endInput, { target: { value: "2099-01-01T12:00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Use this time" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Choose an end time that is not in the future.",
+    );
+    expect(onComplete).not.toHaveBeenCalled();
+  });
+});
+
 describe("signed-out local-data recovery", () => {
   it("lets a signed-out user invoke the native reset for data left on the device", async () => {
     const localState = createEmptyState();
@@ -108,6 +292,8 @@ describe("signed-out local-data recovery", () => {
     const clearButton = await screen.findByRole("button", {
       name: "Clear device data",
     });
+    expect(document.documentElement).toHaveAttribute("lang", "en");
+    expect(document.title).toBe("TimeFarm — Focused work, clear earnings");
     fireEvent.click(clearButton);
     await waitFor(() => expect(resetLocalData).toHaveBeenCalledOnce());
     await waitFor(() =>

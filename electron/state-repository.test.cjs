@@ -328,6 +328,65 @@ test("bootstraps an empty device from a cloud snapshot without echoing any outbo
     }
   }));
 
+test("atomically rebuilds a settled linked cache from a fetched cloud snapshot", () =>
+  withRepository((repository) => {
+    const local = fixture();
+    local.account.authUserId = "auth-user-1";
+    local.sessions = [];
+    repository.replaceState(local);
+    markAllOperationsSynced(repository);
+
+    const saved = repository.rebuildRemoteSnapshot(
+      "auth-user-1",
+      remoteBootstrapSnapshot(),
+    );
+    assert.equal(saved.account.id, "auth-user-1");
+    assert.equal(saved.account.displayName, "Minh from cloud");
+    assert.equal(saved.projects[0].name, "Website from another device");
+    assert.equal(repository.getPullCursor("auth-user-1"), 42);
+    assert.equal(repository.getQueuedOperations(500).length, 0);
+    assert.deepEqual(repository.getSyncSummary(), {
+      queued: 0,
+      failed: 0,
+      conflicts: 0,
+    });
+  }));
+
+test("refuses cache rebuild while local work is active or unsynced", () =>
+  withRepository((repository) => {
+    const active = fixture();
+    active.account.authUserId = "auth-user-1";
+    repository.replaceState(active);
+    markAllOperationsSynced(repository);
+    expectIntegrity(
+      () =>
+        repository.rebuildRemoteSnapshot(
+          "auth-user-1",
+          remoteBootstrapSnapshot(),
+        ),
+      "CACHE_REBUILD_ACTIVE_TIMER",
+    );
+    assert.equal(repository.loadState().account.id, "user-1");
+
+    const settled = clone(active);
+    settled.sessions = [];
+    settled.projects[0].name = "Unsynced local edit";
+    settled.projects[0].updatedAt = TWO_HOURS_LATER;
+    repository.replaceState(settled);
+    expectIntegrity(
+      () =>
+        repository.rebuildRemoteSnapshot(
+          "auth-user-1",
+          remoteBootstrapSnapshot(),
+        ),
+      "CACHE_REBUILD_UNSYNCED_DATA",
+    );
+    assert.equal(
+      repository.loadState().projects[0].name,
+      "Unsynced local edit",
+    );
+  }));
+
 test("refuses cloud bootstrap when the snapshot contains an active remote timer or local setup already exists", () =>
   withRepository((repository) => {
     const unsafe = remoteBootstrapSnapshot({
@@ -373,6 +432,82 @@ test("rejects duplicate active sessions without mutating the previously durable 
     assert.equal(stored.sessions.length, 1);
     assert.equal(stored.sessions[0].id, "session-1");
     assert.equal(stored.sessions[0].status, "running");
+  }));
+
+test("normalizes the canonical text bounds shared with IPC and cloud sync", () => {
+  const state = fixture();
+  state.account.displayName = "😀".repeat(100);
+  state.account.country = "vN";
+  state.projects[0].name = "😀".repeat(160);
+  state.projects[0].color = "😀".repeat(64);
+  state.projects[0].icon = "😀".repeat(32);
+
+  const normalized = normalizeState(state);
+  assert.equal(Array.from(normalized.account.displayName).length, 100);
+  assert.equal(normalized.account.country, "VN");
+  assert.equal(Array.from(normalized.projects[0].name).length, 160);
+  assert.equal(Array.from(normalized.projects[0].color).length, 64);
+  assert.equal(Array.from(normalized.projects[0].icon).length, 32);
+
+  for (const [mutate, code] of [
+    [
+      (candidate) => (candidate.account.displayName = "😀".repeat(101)),
+      "TEXT_TOO_LONG",
+    ],
+    [(candidate) => (candidate.account.displayName = "\u00a0"), "INVALID_TEXT"],
+    [(candidate) => (candidate.account.country = "V1"), "INVALID_COUNTRY"],
+    [(candidate) => (candidate.account.country = "VIETNAM"), "INVALID_COUNTRY"],
+    [(candidate) => (candidate.account.country = ""), "INVALID_COUNTRY"],
+    [
+      (candidate) => (candidate.projects[0].name = "😀".repeat(161)),
+      "TEXT_TOO_LONG",
+    ],
+    [(candidate) => (candidate.projects[0].name = "\u00a0"), "INVALID_TEXT"],
+    [
+      (candidate) => (candidate.projects[0].color = "😀".repeat(65)),
+      "TEXT_TOO_LONG",
+    ],
+    [(candidate) => (candidate.projects[0].color = "\u00a0"), "INVALID_TEXT"],
+    [
+      (candidate) => (candidate.projects[0].icon = "😀".repeat(33)),
+      "TEXT_TOO_LONG",
+    ],
+    [(candidate) => (candidate.projects[0].icon = "\u00a0"), "INVALID_TEXT"],
+  ]) {
+    const invalid = fixture();
+    mutate(invalid);
+    expectIntegrity(() => normalizeState(invalid), code);
+  }
+});
+
+test("rejects non-discrete earnings and completed-project goal targets", () =>
+  withRepository((repository) => {
+    const state = fixture();
+    state.goals = [
+      {
+        id: "goal-fractional-project",
+        kind: "projects_completed",
+        target: 1.5,
+        createdAt: START,
+        syncStatus: "queued",
+      },
+    ];
+    expectIntegrity(
+      () => repository.replaceState(state),
+      "INVALID_GOAL_TARGET",
+    );
+    assert.equal(repository.loadState().goals.length, 0);
+
+    state.goals[0] = {
+      ...state.goals[0],
+      id: "goal-fractional-money",
+      kind: "earnings_monthly",
+    };
+    expectIntegrity(
+      () => repository.replaceState(state),
+      "INVALID_GOAL_TARGET",
+    );
+    assert.equal(repository.loadState().goals.length, 0);
   }));
 
 test("rejects unknown selective write collections before opening a transaction", () =>
@@ -515,6 +650,65 @@ test("persists optimistic revisions and advances a keep-local retry to the obser
     assert.equal(retry.status, "queued");
   }));
 
+test("keep local creates a canonical project retry after a remote delete conflicts with offline history", () =>
+  withRepository((repository) => {
+    const online = fixture();
+    online.sessions = [];
+    repository.replaceState(online);
+    markAllOperationsSynced(repository);
+
+    const offline = clone(online);
+    offline.sessions = [completedSession()];
+    repository.replaceState(offline);
+    assert.equal(
+      repository
+        .getQueuedOperations(500)
+        .filter((operation) => operation.entityType === "project").length,
+      0,
+      "the offline session does not create a redundant project operation",
+    );
+
+    assert.deepEqual(
+      repository.applyRemoteChanges([
+        {
+          cursor: 47,
+          entityType: "project",
+          entityId: "project-1",
+          operation: "delete",
+          payload: { id: "project-1", remoteRevision: 2 },
+        },
+      ]),
+      { cursor: 47, applied: 0, conflicts: 1 },
+    );
+    const [conflict] = repository.getSyncConflicts();
+    assert.equal(conflict.reason, "remote_project_delete_has_history");
+    assert.equal(
+      repository.db
+        .prepare(
+          "SELECT COUNT(*) AS total FROM sync_outbox WHERE entity_type = 'project' AND entity_id = 'project-1' AND status IN ('queued', 'error')",
+        )
+        .get().total,
+      0,
+    );
+
+    assert.equal(repository.resolveSyncConflict(conflict.id), true);
+    const retry = operationFor(repository, "project", "project-1");
+    assert.equal(retry.operation, "upsert");
+    assert.deepEqual(retry.payload, {
+      id: "project-1",
+      name: "Website",
+      paymentModel: "progressive",
+      color: "#7c3aed",
+      icon: "✦",
+      status: "active",
+      createdAt: START,
+      updatedAt: START,
+    });
+    assert.equal(retry.expectedRevision, 2);
+    assert.equal(repository.loadState().projects[0].syncStatus, "queued");
+    assert.equal(repository.getSyncConflicts().length, 0);
+  }));
+
 test("allows discarding an unfinished session but never emits a cloud delete for it", () =>
   withRepository((repository) => {
     const state = fixture();
@@ -571,6 +765,43 @@ test("locks completed history against deletion and edits to an older completed s
     assert.equal(
       stored.find((session) => session.id === "older").note,
       undefined,
+    );
+  }));
+
+test("uses the same deterministic ID tie-breaker in snapshot and SQLite latest-session checks", () =>
+  withRepository((repository) => {
+    const state = fixture();
+    state.sessions = [
+      completedSession({
+        id: "z-session",
+        startedAt: START,
+        endedAt: FOUR_HOURS_LATER,
+      }),
+      completedSession({
+        id: "a-session",
+        startedAt: THREE_HOURS_LATER,
+        endedAt: FOUR_HOURS_LATER,
+      }),
+    ];
+    repository.replaceState(state);
+
+    const editLatest = repository.loadState();
+    editLatest.sessions.find((session) => session.id === "z-session").note =
+      "allowed";
+    repository.replaceState(editLatest);
+    assert.equal(
+      repository
+        .loadState()
+        .sessions.find((session) => session.id === "z-session").note,
+      "allowed",
+    );
+
+    const editOlder = repository.loadState();
+    editOlder.sessions.find((session) => session.id === "a-session").note =
+      "blocked";
+    expectIntegrity(
+      () => repository.replaceState(editOlder),
+      "HISTORICAL_SESSION_LOCKED",
     );
   }));
 
@@ -749,7 +980,10 @@ test("migrates a legacy JSON file once and never resurrects it after reset", () 
     fs.writeFileSync(legacyPath, JSON.stringify(state), "utf8");
 
     let repository = new LocalStateRepository(databasePath);
-    assert.equal(repository.importLegacyJson(legacyPath), true);
+    assert.deepEqual(repository.importLegacyJson(legacyPath), {
+      status: "success",
+      archived: true,
+    });
     assert.equal(repository.loadState().account.displayName, "Minh");
     assert.equal(fs.existsSync(legacyPath), false);
     assert.equal(fs.existsSync(legacyPath + ".migrated"), true);
@@ -757,7 +991,9 @@ test("migrates a legacy JSON file once and never resurrects it after reset", () 
     repository.close();
 
     repository = new LocalStateRepository(databasePath);
-    assert.equal(repository.importLegacyJson(legacyPath), false);
+    assert.deepEqual(repository.importLegacyJson(legacyPath), {
+      status: "already_migrated",
+    });
     assert.equal(repository.loadState().account, null);
     const migrationBackupPath = `${databasePath}.pre-v2.backup`;
     fs.writeFileSync(migrationBackupPath, "recovery fixture", "utf8");
@@ -769,6 +1005,121 @@ test("migrates a legacy JSON file once and never resurrects it after reset", () 
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("returns actionable legacy import failures without consuming the recovery source", () => {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "workly-legacy-recovery-"),
+  );
+  const databasePath = path.join(directory, "workly.db");
+  const legacyPath = path.join(directory, "workly-state.json");
+  const repository = new LocalStateRepository(databasePath);
+  try {
+    fs.writeFileSync(legacyPath, "{not valid json", "utf8");
+    assert.deepEqual(repository.importLegacyJson(legacyPath), {
+      status: "invalid_data",
+      errorCode: undefined,
+      recoveryFile: legacyPath,
+    });
+    assert.equal(fs.existsSync(legacyPath), true);
+    assert.equal(repository.hasAccount(), false);
+
+    fs.writeFileSync(
+      legacyPath,
+      JSON.stringify({ ...emptyState(), version: 999 }),
+      "utf8",
+    );
+    assert.deepEqual(repository.importLegacyJson(legacyPath), {
+      status: "unsupported_version",
+      version: 999,
+      recoveryFile: legacyPath,
+    });
+    assert.equal(fs.existsSync(legacyPath), true);
+    assert.equal(repository.hasAccount(), false);
+  } finally {
+    repository.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("explicitly skipping a failed legacy import preserves a named recovery copy", () => {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "workly-legacy-skip-"),
+  );
+  const databasePath = path.join(directory, "workly.db");
+  const legacyPath = path.join(directory, "workly-state.json");
+  const repository = new LocalStateRepository(databasePath);
+  try {
+    fs.writeFileSync(legacyPath, "legacy recovery bytes", "utf8");
+    const result = repository.skipLegacyImport(legacyPath);
+    assert.equal(result.status, "skipped");
+    assert.equal(result.recoveryFiles.length, 1);
+    assert.equal(fs.existsSync(legacyPath), false);
+    assert.equal(fs.existsSync(result.recoveryFiles[0]), true);
+    assert.equal(
+      fs.readFileSync(result.recoveryFiles[0], "utf8"),
+      "legacy recovery bytes",
+    );
+    assert.deepEqual(repository.importLegacyJson(legacyPath), {
+      status: "not_found",
+    });
+  } finally {
+    repository.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("wipes local workspace rows, WAL content, and recovery sources with verification", () =>
+  withRepository((repository, databasePath) => {
+    const state = fixture();
+    state.sessions = [completedSession()];
+    repository.replaceState(state);
+    repository.applyRemoteChanges([
+      {
+        cursor: 48,
+        entityType: "project",
+        entityId: "project-1",
+        operation: "delete",
+        payload: { id: "project-1", remoteRevision: 2 },
+      },
+    ]);
+
+    const legacyPath = path.join(
+      path.dirname(databasePath),
+      "workly-state.json",
+    );
+    const skippedLegacy = `${legacyPath}.skipped-recovery`;
+    const backup = `${databasePath}.pre-v4.backup`;
+    fs.writeFileSync(legacyPath, "legacy", "utf8");
+    fs.writeFileSync(skippedLegacy, "skipped", "utf8");
+    fs.writeFileSync(backup, "backup", "utf8");
+
+    const result = repository.wipeDeviceData(legacyPath);
+    assert.equal(result.state.account, null);
+    assert.deepEqual(result.verification, {
+      remainingRows: 0,
+      integrity: "ok",
+      foreignKeyErrors: 0,
+      walBytes: 0,
+      removedFiles: [
+        "workly-state.json",
+        "workly-state.json.skipped-recovery",
+        "workly.db.pre-v4.backup",
+      ],
+    });
+    assert.equal(
+      repository.db.prepare("PRAGMA secure_delete").get().secure_delete,
+      1,
+    );
+    assert.equal(fs.existsSync(legacyPath), false);
+    assert.equal(fs.existsSync(skippedLegacy), false);
+    assert.equal(fs.existsSync(backup), false);
+    assert.equal(repository.getQueuedOperations(500).length, 0);
+    assert.deepEqual(repository.getSyncSummary(), {
+      queued: 0,
+      failed: 0,
+      conflicts: 0,
+    });
+  }));
 
 test("persists a pull cursor and applies a remote entity without creating an outbox echo", () =>
   withRepository((repository, databasePath) => {

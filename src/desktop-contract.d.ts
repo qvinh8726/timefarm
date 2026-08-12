@@ -5,10 +5,15 @@ declare global {
 
   interface DesktopBridge {
     loadState: () => Promise<unknown>;
+    getLegacyImportStatus: () => Promise<LegacyImportStatus>;
+    legacyImportAction: (
+      action: "retry" | "open_data_folder" | "export_recovery" | "skip",
+    ) => Promise<LegacyImportStatus>;
     executeCommand: (command: unknown) => Promise<unknown>;
     claimAuthenticatedAccount: () => Promise<unknown>;
     bootstrapAuthenticatedAccount: () => Promise<CloudBootstrapResult>;
     resetLocalData: () => Promise<unknown>;
+    rebuildLocalCache: () => Promise<unknown>;
     getSyncSummary: () => Promise<SyncSummary>;
     getTimerLeaseStatus: () => Promise<TimerLeaseStatus>;
     acquireTimerLease: () => Promise<TimerLeaseStatus>;
@@ -59,6 +64,21 @@ declare global {
     queued: number;
     failed: number;
     conflicts: number;
+  }
+
+  interface LegacyImportStatus {
+    status:
+      | "success"
+      | "not_found"
+      | "already_initialized"
+      | "already_migrated"
+      | "invalid_data"
+      | "filesystem_error"
+      | "unsupported_version"
+      | "skipped";
+    errorCode?: string;
+    version?: unknown;
+    warning?: "archive_failed";
   }
 
   interface OverlayPreferences {

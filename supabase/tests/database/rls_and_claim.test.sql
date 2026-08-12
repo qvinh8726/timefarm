@@ -1,6 +1,6 @@
 begin;
 
-select plan(20);
+select plan(44);
 
 insert into auth.users (
   id,
@@ -76,8 +76,7 @@ insert into public.profiles (
 -- and inspect canonical RPC results as the authenticated role.
 grant select on table
   public.profiles,
-  public.projects,
-  public.sync_changes
+  public.projects
 to authenticated;
 
 select set_config(
@@ -135,7 +134,8 @@ select lives_ok(
       'account',
       'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
       'upsert',
-      '{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","displayName":"One updated","country":"VN","language":"vi","currency":"VND","timezone":"Asia/Saigon","createdAt":"2026-08-12T00:00:00.000Z"}'::jsonb
+      '{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","displayName":"One updated","country":"VN","language":"vi","currency":"VND","timezone":"Asia/Saigon","createdAt":"2026-08-12T00:00:00.000Z"}'::jsonb,
+      0
     )
   $$,
   'account sync remains compatible after a workspace claim'
@@ -158,16 +158,53 @@ select lives_ok(
   $$,
   'preference CAS accepts the local workspace id as its request identity'
 );
+select throws_ok(
+  $$
+    select public.workly_apply_sync_operation(
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaac',
+      'project',
+      '10000000-0000-4000-8000-000000000099',
+      'upsert',
+      '{"id":"10000000-0000-4000-8000-000000000099"}'::jsonb,
+      null
+    )
+  $$,
+  '22023',
+  'Expected revision must be a non-negative safe integer',
+  'the public writer rejects an explicit NULL CAS revision'
+);
+select lives_ok(
+  $$
+    select * from public.workly_pull_changes(0, 100)
+  $$,
+  'authenticated clients can pull changes through the RPC boundary'
+);
+select throws_ok(
+  $$
+    select * from public.workly_pull_changes(0, null)
+  $$,
+  '22023',
+  'Pull limit must be a positive integer',
+  'change-feed pulls cannot bypass the page bound with a null limit'
+);
 select is(
   (
     select entity_id::text || ':' || (payload->>'remoteRevision')
-    from public.sync_changes
-    where user_id = auth.uid() and entity_type = 'preferences'
+    from public.workly_pull_changes(0, 100)
+    where entity_type = 'preferences'
     order by cursor desc
     limit 1
   ),
   '11111111-1111-4111-8111-111111111111:1',
   'preference change feed uses the cloud subject and carries its remote revision'
+);
+select throws_ok(
+  $$
+    select count(*) from public.sync_changes
+  $$,
+  '42501',
+  'permission denied for table sync_changes',
+  'authenticated clients cannot read the change-feed table directly'
 );
 
 reset role;
@@ -238,6 +275,176 @@ select is(
   false,
   'the final bootstrap page terminates pagination'
 );
+select throws_ok(
+  $$
+    select public.workly_bootstrap_page(null, null, null, null)
+  $$,
+  '22023',
+  'Bootstrap page size must be between 1 and 500',
+  'base bootstrap cannot interpret a NULL limit as unbounded'
+);
+select throws_ok(
+  $$
+    select public.workly_bootstrap_page_v2(null, null, null, null)
+  $$,
+  '22023',
+  'Bootstrap page size must be between 1 and 500',
+  'revision-aware bootstrap inherits the strict page bound'
+);
+select throws_ok(
+  $$
+    select public.workly_apply_sync_operation(
+      '30000000-0000-4000-8000-000000000090',
+      'project',
+      '10000000-0000-4000-8000-000000000090',
+      'upsert',
+      jsonb_build_object(
+        'id', '10000000-0000-4000-8000-000000000090',
+        'name', repeat('x', 161),
+        'paymentModel', 'per_session',
+        'expectedMoney', null,
+        'note', null,
+        'color', '#625bf6',
+        'icon', 'briefcase',
+        'status', 'active',
+        'completedAt', null,
+        'createdAt', '2026-08-12T00:00:00Z',
+        'updatedAt', '2026-08-12T00:00:00Z'
+      ),
+      0
+    )
+  $$,
+  '22023',
+  'Project name must contain 1 to 160 characters',
+  'cloud project validation matches the desktop text bound'
+);
+select throws_ok(
+  $$
+    select public.workly_apply_sync_operation(
+      '30000000-0000-4000-8000-000000000093',
+      'account',
+      'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      'upsert',
+      '{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","displayName":"One","country":"V1","language":"vi","currency":"VND","timezone":"Asia/Saigon","createdAt":"2026-08-12T00:00:00.000Z"}'::jsonb,
+      1
+    )
+  $$,
+  '22023',
+  'Account country must be a two- or three-letter code',
+  'cloud account validation rejects non-letter country codes'
+);
+select lives_ok(
+  $$
+    select public.workly_apply_sync_operation(
+      '30000000-0000-4000-8000-000000000095',
+      'account',
+      'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      'upsert',
+      jsonb_build_object(
+        'id', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        'displayName', repeat('😀', 100),
+        'country', 'VN',
+        'language', 'vi',
+        'currency', 'VND',
+        'timezone', 'Asia/Saigon',
+        'createdAt', '2026-08-12T00:00:00.000Z'
+      ),
+      1
+    )
+  $$,
+  'cloud and desktop both count supplementary Unicode by code point'
+);
+select throws_ok(
+  $$
+    select public.workly_apply_sync_operation(
+      '30000000-0000-4000-8000-000000000096',
+      'account',
+      'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      'upsert',
+      jsonb_build_object(
+        'id', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        'displayName', repeat('😀', 101),
+        'country', 'VN',
+        'language', 'vi',
+        'currency', 'VND',
+        'timezone', 'Asia/Saigon',
+        'createdAt', '2026-08-12T00:00:00.000Z'
+      ),
+      2
+    )
+  $$,
+  '22023',
+  'Account display name must contain 1 to 100 characters',
+  'cloud and desktop reject the same Unicode code-point overflow'
+);
+select throws_ok(
+  $$
+    select public.workly_apply_sync_operation(
+      '30000000-0000-4000-8000-000000000097',
+      'account',
+      'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      'upsert',
+      jsonb_build_object(
+        'id', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        'displayName', chr(160),
+        'country', 'VN',
+        'language', 'vi',
+        'currency', 'VND',
+        'timezone', 'Asia/Saigon',
+        'createdAt', '2026-08-12T00:00:00.000Z'
+      ),
+      2
+    )
+  $$,
+  '22023',
+  'Account display name must contain 1 to 100 characters',
+  'cloud and ECMAScript trim both reject an NBSP-only display name'
+);
+select throws_ok(
+  $$
+    select public.workly_apply_sync_operation(
+      '30000000-0000-4000-8000-000000000094',
+      'goal',
+      '60000000-0000-4000-8000-000000000094',
+      'upsert',
+      '{"id":"60000000-0000-4000-8000-000000000094","kind":"earnings_monthly","target":1.5,"createdAt":"2026-08-12T00:00:00.000Z"}'::jsonb,
+      0
+    )
+  $$,
+  '22023',
+  'Earnings and completed-project goals require whole-unit targets',
+  'cloud earnings goals use whole minor currency units like the desktop'
+);
+select throws_ok(
+  $$
+    select public.workly_apply_sync_operation(
+      '30000000-0000-4000-8000-000000000091',
+      'payment',
+      '50000000-0000-4000-8000-000000000091',
+      'upsert',
+      '{"id":"50000000-0000-4000-8000-000000000091","projectId":"10000000-0000-4000-8000-000000000001","money":{"amountMinor":9007199254740992,"currency":"VND"},"receivedAt":"2026-08-12T00:00:00Z","kind":"progressive","note":null,"createdAt":"2026-08-12T00:00:00Z"}'::jsonb,
+      0
+    )
+  $$,
+  '22023',
+  'Payment amount must be a non-negative safe integer',
+  'cloud money cannot exceed the JavaScript safe-integer range'
+);
+select throws_ok(
+  $$
+    select public.workly_apply_sync_operation(
+      '30000000-0000-4000-8000-000000000092',
+      'preferences',
+      'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      'upsert',
+      '{"theme":"dark","miniTimerMode":"hidden","dashboardHiddenWidgets":["timer","timer"],"dashboardWidgetOrder":[],"dashboardWidgetSizes":{}}'::jsonb,
+      1
+    )
+  $$,
+  '22023',
+  'Dashboard hidden widgets are invalid',
+  'cloud preferences reject duplicate widgets like the local normalizer'
+);
 
 select is(
   (
@@ -293,6 +500,92 @@ select is(
 );
 
 reset role;
+insert into public.work_sessions (
+  id,
+  user_id,
+  project_id,
+  started_at,
+  ended_at,
+  timezone,
+  active_duration_ms,
+  status,
+  earnings_amount_minor,
+  earnings_currency
+) values (
+  '40000000-0000-4000-8000-000000000001',
+  '11111111-1111-4111-8111-111111111111',
+  '10000000-0000-4000-8000-000000000001',
+  '2026-08-12T01:00:00Z',
+  '2026-08-12T02:00:00Z',
+  'UTC',
+  3600000,
+  'completed',
+  0,
+  'VND'
+);
+insert into public.payments (
+  id,
+  user_id,
+  project_id,
+  amount_minor,
+  currency,
+  received_at,
+  kind
+) values (
+  '50000000-0000-4000-8000-000000000001',
+  '11111111-1111-4111-8111-111111111111',
+  '10000000-0000-4000-8000-000000000001',
+  100000,
+  'VND',
+  '2026-08-12T02:00:00Z',
+  'progressive'
+);
+set local role authenticated;
+
+select throws_ok(
+  $$
+    select public.workly_apply_sync_operation(
+      '30000000-0000-4000-8000-000000000004',
+      'project',
+      '10000000-0000-4000-8000-000000000001',
+      'delete',
+      '{"id":"10000000-0000-4000-8000-000000000001"}'::jsonb,
+      2
+    )
+  $$,
+  'P0001',
+  'Projects with work or payment history cannot be deleted',
+  'project deletion rejects durable session and payment history'
+);
+
+reset role;
+select ok(
+  exists (
+    select 1
+    from public.projects
+    where id = '10000000-0000-4000-8000-000000000001'
+  ),
+  'a rejected project deletion preserves the project'
+);
+select is(
+  (
+    select project_id::text
+    from public.work_sessions
+    where id = '40000000-0000-4000-8000-000000000001'
+  ),
+  '10000000-0000-4000-8000-000000000001',
+  'a rejected project deletion preserves session attribution'
+);
+select is(
+  (
+    select project_id::text
+    from public.payments
+    where id = '50000000-0000-4000-8000-000000000001'
+  ),
+  '10000000-0000-4000-8000-000000000001',
+  'a rejected project deletion preserves payment history'
+);
+
 select set_config(
   'request.jwt.claims',
   '{"sub":"22222222-2222-4222-8222-222222222222","role":"authenticated"}',
@@ -330,6 +623,100 @@ select throws_ok(
   'P0001',
   'Unsupported profile currency',
   'workspace claim rejects currencies outside the desktop contract'
+);
+select throws_ok(
+  $$
+    select public.workly_claim_workspace(
+      'blank-display-name',
+      '{"displayName":"   ","country":"US","language":"en","currency":"USD","timezone":"UTC"}'::jsonb
+    )
+  $$,
+  '22023',
+  'Profile display name must contain 1 to 100 characters',
+  'workspace claim rejects a profile the local normalizer cannot persist'
+);
+
+reset role;
+with inserted as (
+  insert into public.sync_changes (
+    user_id,
+    entity_type,
+    entity_id,
+    operation,
+    payload,
+    created_at
+  ) values (
+    '22222222-2222-4222-8222-222222222222',
+    'goal',
+    '60000000-0000-4000-8000-000000000001',
+    'delete',
+    '{"id":"60000000-0000-4000-8000-000000000001","remoteRevision":2}'::jsonb,
+    now() - interval '120 days'
+  )
+  returning cursor
+)
+select set_config(
+  'timefarm.test_retention_cursor',
+  inserted.cursor::text,
+  true
+)
+from inserted;
+set local role service_role;
+select throws_ok(
+  format(
+    $$
+      select public.workly_prune_sync_changes(
+        '22222222-2222-4222-8222-222222222222',
+        %s,
+        now() - interval '1 day'
+      )
+    $$,
+    current_setting('timefarm.test_retention_cursor')
+  ),
+  '22023',
+  'Retention cutoff must be at least 90 days old',
+  'retention cannot discard a recently delivered offline window'
+);
+select is(
+  (
+    public.workly_prune_sync_changes(
+      '22222222-2222-4222-8222-222222222222',
+      current_setting('timefarm.test_retention_cursor')::bigint,
+      now() - interval '100 days'
+    )->>'deletedRows'
+  )::bigint,
+  1::bigint,
+  'trusted retention deletes only rows satisfying both safe cutoffs'
+);
+
+reset role;
+select set_config(
+  'request.jwt.claims',
+  '{"sub":"22222222-2222-4222-8222-222222222222","role":"authenticated"}',
+  true
+);
+set local role authenticated;
+select is(
+  (
+    public.workly_bootstrap_page_v2(null, null, null, 1)->>'cursor'
+  )::bigint,
+  current_setting('timefarm.test_retention_cursor')::bigint,
+  'a full bootstrap starts at least at the durable retention watermark'
+);
+select throws_ok(
+  $$
+    select * from public.workly_pull_changes(0, 100)
+  $$,
+  'P0001',
+  'Change cursor expired; full bootstrap required',
+  'a stale device is told to rebuild instead of receiving a partial feed'
+);
+select lives_ok(
+  format(
+    'select * from public.workly_pull_changes(%s, 100)',
+    current_setting('timefarm.test_retention_cursor')
+  ),
+  'a device at the durable retention watermark can continue pulling'
 );
 
 select * from finish();

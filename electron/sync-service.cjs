@@ -30,6 +30,29 @@ function normaliseRpcTimeoutMs(value) {
   return value;
 }
 
+/**
+ * Coalesces main-process sync publication requests without involving the local
+ * mutation queue. The callback starts on the next microtask, after the shared
+ * promise has been installed, so re-entrant callers cannot create a second run.
+ */
+function createCoalescedSyncExecutor() {
+  let inFlight = null;
+  return function runCoalescedSync(work) {
+    if (inFlight) return inFlight;
+    if (typeof work !== "function")
+      return Promise.reject(
+        new TypeError("A sync callback must be a function."),
+      );
+    const run = Promise.resolve().then(work);
+    inFlight = run;
+    const clear = () => {
+      if (inFlight === run) inFlight = null;
+    };
+    void run.then(clear, clear);
+    return run;
+  };
+}
+
 class SyncService {
   /** @param {{repository: any, authService: any, logger?: any, rpcTimeoutMs?: number, timeoutScheduler?: any}} options */
   constructor({
@@ -54,6 +77,8 @@ class SyncService {
     this.rpcTimeoutMs = normaliseRpcTimeoutMs(rpcTimeoutMs);
     this.timeoutScheduler = timeoutScheduler;
     this.running = false;
+    this.inFlightSync = null;
+    this.syncGeneration = 0;
     this.lastPull = {
       cursor: 0,
       applied: 0,
@@ -94,7 +119,31 @@ class SyncService {
     if (remote.state !== "ready") return remote;
     const { data } = remote;
     if (data.found !== true) return { state: "not_found" };
-    const saved = this.repository.bootstrapRemoteSnapshot(authUserId, data);
+    return this.applyCloudBootstrapSnapshot(authUserId, data);
+  }
+
+  /**
+   * Applies a previously validated cloud snapshot synchronously. Main can run
+   * this small SQLite transaction in its local mutation queue after all remote
+   * pagination has completed outside that queue.
+   */
+  applyCloudBootstrapSnapshot(
+    authUserId,
+    data,
+    { replaceExisting = false } = {},
+  ) {
+    if (!this.supportsBootstrap())
+      throw new Error("The local database does not support cloud bootstrap.");
+    if (
+      replaceExisting &&
+      typeof this.repository.rebuildRemoteSnapshot !== "function"
+    )
+      throw new Error("The local database does not support cache rebuild.");
+    if (!data || data.found !== true)
+      throw new Error("A complete cloud bootstrap snapshot is required.");
+    const saved = replaceExisting
+      ? this.repository.rebuildRemoteSnapshot(authUserId, data)
+      : this.repository.bootstrapRemoteSnapshot(authUserId, data);
     this.lastPull = {
       cursor:
         Number.isSafeInteger(data.cursor) && data.cursor >= 0 ? data.cursor : 0,
@@ -277,92 +326,127 @@ class SyncService {
     );
   }
 
-  async syncNow(expectedAuthUserId) {
-    if (this.running)
-      return { state: "already_running", processed: 0, failed: 0 };
+  syncNow(expectedAuthUserId) {
+    // Assign the shared promise before the first auth await. This closes the
+    // race where simultaneous callers could both fetch a token and start a
+    // pull. Every overlapping request observes the same pull-before-push run.
+    if (this.inFlightSync) return this.inFlightSync;
+    const generation = this.syncGeneration;
+    const run = Promise.resolve().then(() =>
+      this.performSync(expectedAuthUserId, generation),
+    );
+    this.inFlightSync = run;
+    this.running = true;
+    const clear = () => {
+      if (this.inFlightSync !== run) return;
+      this.inFlightSync = null;
+      this.running = false;
+    };
+    void run.then(clear, clear);
+    return run;
+  }
+
+  cancelPendingSync() {
+    this.syncGeneration += 1;
+    return { cancelled: Boolean(this.inFlightSync) };
+  }
+
+  isCurrentSync(generation) {
+    return generation === this.syncGeneration;
+  }
+
+  async performSync(expectedAuthUserId, generation = this.syncGeneration) {
+    const cancelled = () => ({ state: "cancelled", processed: 0, failed: 0 });
+    if (!this.isCurrentSync(generation)) return cancelled();
     if (!this.authService.isConfigured())
       return { state: "not_configured", processed: 0, failed: 0 };
     const token = await this.authService.getAccessToken(expectedAuthUserId);
+    if (!this.isCurrentSync(generation)) return cancelled();
     if (!token) return { state: "not_authenticated", processed: 0, failed: 0 };
-    this.running = true;
     let processed = 0;
     let failed = 0;
-    try {
-      // Pull before writing. If another device changed an entity while this
-      // device was offline, the repository records that conflict and omits
-      // the pending local operation from this run instead of silently
-      // last-writing it over the cloud version. A failed pull is a safety
-      // stop: keep the durable outbox untouched until cloud state is known.
-      if (this.supportsPull()) {
-        try {
-          this.lastPull = await this.pullChanges(token);
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : "Remote pull failed.";
-          this.logger.warn("TimeFarm sync pull failed before push", {
-            message,
-          });
-          return { state: "partial", processed: 0, failed: 1 };
-        }
-        // Pull-before-push is a correctness boundary, not a best-effort hint.
-        // If the bounded pull still has another page, a remote conflict may be
-        // waiting beyond the current cursor. Never push stale local work until
-        // a later run has caught up completely.
-        if (this.lastPull.hasMore) {
-          return { state: "pull_pending", processed: 0, failed: 0 };
-        }
+    // Pull before writing. If another device changed an entity while this
+    // device was offline, the repository records that conflict and omits
+    // the pending local operation from this run instead of silently
+    // last-writing it over the cloud version. A failed pull is a safety
+    // stop: keep the durable outbox untouched until cloud state is known.
+    if (this.supportsPull()) {
+      try {
+        this.lastPull = await this.pullChanges(token, () =>
+          this.isCurrentSync(generation),
+        );
+      } catch (error) {
+        if (!this.isCurrentSync(generation)) return cancelled();
+        const message =
+          error instanceof Error ? error.message : "Remote pull failed.";
+        this.logger.warn("TimeFarm sync pull failed before push", {
+          message,
+        });
+        return { state: "partial", processed: 0, failed: 1 };
       }
-
-      let operations = this.repository.getQueuedOperations(50);
-      if (this.supportsRevisionCas()) {
-        try {
-          await this.hydrateExpectedRevisions(operations, token);
-        } catch (error) {
-          const message =
-            error instanceof Error
-              ? error.message
-              : "Cloud revision lookup failed.";
-          this.logger.warn("TimeFarm revision hydration failed before push", {
-            message,
-          });
-          return { state: "partial", processed: 0, failed: 1 };
-        }
-        operations = this.repository.getQueuedOperations(50);
+      if (!this.isCurrentSync(generation)) return cancelled();
+      // Pull-before-push is a correctness boundary, not a best-effort hint.
+      // If the bounded pull still has another page, a remote conflict may be
+      // waiting beyond the current cursor. Never push stale local work until
+      // a later run has caught up completely.
+      if (this.lastPull.hasMore) {
+        return { state: "pull_pending", processed: 0, failed: 0 };
       }
-      for (const operation of operations) {
-        try {
-          const result = await this.applyOperation(operation, token);
-          this.repository.markOperationSynced(
-            operation.id,
-            result?.remoteRevision,
-          );
-          processed += 1;
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : "Sync failed.";
-          this.repository.markOperationFailed(operation.id, message);
-          failed += 1;
-          this.logger.warn("TimeFarm sync operation failed", {
-            operationId: operation.id,
-            entityType: operation.entityType,
-          });
-          // Account creation is the root dependency for every other cloud
-          // entity.  Do not keep attempting dependent writes in this run if
-          // it failed: a direct or stale client must never produce cloud rows
-          // that cannot be identified by a profile-backed bootstrap.
-          if (operation.entityType === "account") {
-            return { state: "partial", processed, failed };
-          }
-        }
-      }
-
-      return { state: failed > 0 ? "partial" : "complete", processed, failed };
-    } finally {
-      this.running = false;
     }
+
+    let operations = this.repository.getQueuedOperations(50);
+    if (this.supportsRevisionCas()) {
+      try {
+        await this.hydrateExpectedRevisions(operations, token, () =>
+          this.isCurrentSync(generation),
+        );
+      } catch (error) {
+        if (!this.isCurrentSync(generation)) return cancelled();
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Cloud revision lookup failed.";
+        this.logger.warn("TimeFarm revision hydration failed before push", {
+          message,
+        });
+        return { state: "partial", processed: 0, failed: 1 };
+      }
+      if (!this.isCurrentSync(generation)) return cancelled();
+      operations = this.repository.getQueuedOperations(50);
+    }
+    for (const operation of operations) {
+      if (!this.isCurrentSync(generation)) return cancelled();
+      try {
+        const result = await this.applyOperation(operation, token);
+        if (!this.isCurrentSync(generation)) return cancelled();
+        this.repository.markOperationSynced(
+          operation.id,
+          result?.remoteRevision,
+        );
+        processed += 1;
+      } catch (error) {
+        if (!this.isCurrentSync(generation)) return cancelled();
+        const message = error instanceof Error ? error.message : "Sync failed.";
+        this.repository.markOperationFailed(operation.id, message);
+        failed += 1;
+        this.logger.warn("TimeFarm sync operation failed", {
+          operationId: operation.id,
+          entityType: operation.entityType,
+        });
+        // Account creation is the root dependency for every other cloud
+        // entity.  Do not keep attempting dependent writes in this run if
+        // it failed: a direct or stale client must never produce cloud rows
+        // that cannot be identified by a profile-backed bootstrap.
+        if (operation.entityType === "account") {
+          return { state: "partial", processed, failed };
+        }
+      }
+    }
+
+    return { state: failed > 0 ? "partial" : "complete", processed, failed };
   }
 
-  async pullChanges(accessToken) {
+  async pullChanges(accessToken, isCurrent = () => true) {
     if (!this.supportsPull())
       return { cursor: 0, applied: 0, conflicts: 0, pages: 0, hasMore: false };
     let cursor = this.repository.getPullCursor();
@@ -381,6 +465,7 @@ class SyncService {
         },
         accessToken,
       );
+      if (!isCurrent()) return { cursor, applied, conflicts, pages, hasMore };
       if (error) throw new Error(error.message);
       if (data !== null && data !== undefined && !Array.isArray(data)) {
         throw new Error("Remote pull returned an invalid response.");
@@ -454,7 +539,11 @@ class SyncService {
     return data;
   }
 
-  async hydrateExpectedRevisions(operations, accessToken) {
+  async hydrateExpectedRevisions(
+    operations,
+    accessToken,
+    isCurrent = () => true,
+  ) {
     const missing = operations.filter(
       (operation) => !Number.isSafeInteger(operation.expectedRevision),
     );
@@ -469,6 +558,7 @@ class SyncService {
       },
       accessToken,
     );
+    if (!isCurrent()) return;
     if (error?.code === "PGRST202")
       throw new Error(
         "Cloud revision lookup is not deployed. Apply Supabase migration 0005_optimistic_revisions.sql before synchronizing this device.",
@@ -491,6 +581,7 @@ class SyncService {
       revisions.set(`${item.entityType}:${item.entityId}`, item.remoteRevision);
     }
     for (const operation of missing) {
+      if (!isCurrent()) return;
       const revision = revisions.get(
         `${operation.entityType}:${operation.entityId}`,
       );
@@ -570,6 +661,7 @@ class SyncService {
 }
 
 module.exports = {
+  createCoalescedSyncExecutor,
   DEFAULT_RPC_TIMEOUT_MS,
   MAX_PULL_PAGES_PER_RUN,
   PULL_PAGE_LIMIT,

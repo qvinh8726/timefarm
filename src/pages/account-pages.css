@@ -1,0 +1,521 @@
+@layer design {
+  .account-page {
+    width: min(1120px, 100%);
+    color: var(--text);
+  }
+
+  .account-page-heading {
+    max-width: 720px;
+  }
+
+  .account-page-heading .eyebrow,
+  .account-section-code {
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .account-profile-sheet,
+  .account-settings-layout {
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .account-identity-section {
+    display: grid;
+    grid-template-columns: minmax(260px, 0.72fr) minmax(0, 1.28fr);
+    min-height: 164px;
+  }
+
+  .account-identity-primary {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 17px;
+    padding: 26px 28px 26px 0;
+    border-right: 1px solid var(--border);
+  }
+
+  .account-page .profile-avatar {
+    display: grid;
+    width: 68px;
+    height: 68px;
+    flex: 0 0 68px;
+    margin: 0;
+    place-items: center;
+    border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--border));
+    border-radius: 13px;
+    color: var(--primary);
+    background:
+      linear-gradient(
+        90deg,
+        transparent 49%,
+        color-mix(in srgb, var(--primary) 12%, transparent) 50%,
+        transparent 51%
+      ),
+      linear-gradient(
+        transparent 49%,
+        color-mix(in srgb, var(--primary) 12%, transparent) 50%,
+        transparent 51%
+      ),
+      color-mix(in srgb, var(--primary) 8%, var(--panel));
+    background-size: 12px 12px;
+    box-shadow: inset 0 0 0 4px var(--panel);
+    font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
+    font-size: 27px;
+    font-weight: 720;
+  }
+
+  .account-identity-copy {
+    min-width: 0;
+  }
+
+  .account-identity-copy span,
+  .account-section-code {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 680;
+    letter-spacing: 0.9px;
+    text-transform: uppercase;
+  }
+
+  .account-identity-copy h2 {
+    overflow: hidden;
+    margin: 5px 0 0;
+    color: var(--text);
+    font-size: clamp(19px, 2vw, 24px);
+    font-weight: 720;
+    letter-spacing: -0.45px;
+    text-overflow: ellipsis;
+  }
+
+  .account-profile-facts {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin: 0;
+  }
+
+  .account-profile-facts > div {
+    display: grid;
+    min-width: 0;
+    align-content: center;
+    gap: 10px;
+    padding: 26px 22px;
+    border-right: 1px solid var(--border);
+  }
+
+  .account-profile-facts > div:last-child {
+    border-right: 0;
+  }
+
+  .account-profile-facts dt {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 620;
+  }
+
+  .account-profile-facts dd {
+    overflow-wrap: anywhere;
+    margin: 0;
+    color: var(--text);
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 680;
+  }
+
+  .account-sync-section {
+    display: grid;
+    grid-template-columns: minmax(220px, 0.72fr) minmax(0, 1.28fr);
+    gap: clamp(30px, 5vw, 72px);
+    padding: 30px 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .account-sync-heading h2,
+  .account-settings-section-heading h2 {
+    margin: 7px 0 0;
+    color: var(--text);
+    font-size: 16px;
+    font-weight: 710;
+    letter-spacing: -0.2px;
+  }
+
+  .account-sync-copy > p {
+    max-width: 760px;
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.65;
+  }
+
+  .account-sync-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-top: 20px;
+    padding-top: 17px;
+    border-top: 1px solid var(--border);
+    color: color-mix(in srgb, var(--primary) 84%, var(--text));
+    font-size: 12.5px;
+    font-weight: 650;
+    line-height: 1.5;
+  }
+
+  .account-sync-note svg {
+    flex: 0 0 auto;
+    margin-top: 1px;
+  }
+
+  .account-live-region {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .account-wipe-confirmation {
+    display: grid;
+    gap: 10px;
+    padding: 16px 0 2px;
+    border-top: 1px solid color-mix(in srgb, var(--danger) 34%, var(--border));
+    color: var(--text);
+  }
+
+  .account-wipe-confirmation label {
+    font-size: 13px;
+    font-weight: 650;
+  }
+
+  .account-wipe-confirmation > div {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+
+  .account-wipe-confirmation input {
+    width: min(220px, 100%);
+    min-height: 43px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 9px 11px;
+    color: var(--text);
+    background: var(--input);
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 13px;
+    text-transform: uppercase;
+  }
+
+  .account-settings-layout {
+    display: grid;
+    gap: 0;
+  }
+
+  .account-settings-section {
+    display: grid;
+    grid-template-columns: minmax(185px, 0.36fr) minmax(0, 1.64fr);
+    column-gap: clamp(28px, 4vw, 60px);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .account-settings-section:last-child {
+    border-bottom: 0;
+  }
+
+  .account-settings-section-heading {
+    padding: 27px 0;
+  }
+
+  .account-settings-rows,
+  .account-data-actions {
+    min-width: 0;
+    padding-left: clamp(24px, 3vw, 40px);
+    border-left: 1px solid var(--border);
+  }
+
+  .account-setting-row {
+    display: grid;
+    min-height: 88px;
+    grid-template-columns: minmax(0, 1fr) minmax(170px, 200px);
+    align-items: center;
+    gap: 24px;
+    padding: 16px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .account-setting-row:last-child {
+    border-bottom: 0;
+  }
+
+  .account-setting-label {
+    display: grid;
+    min-width: 0;
+    gap: 5px;
+  }
+
+  .account-setting-label label {
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 690;
+    cursor: pointer;
+  }
+
+  .account-setting-label span {
+    max-width: 620px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .account-setting-control {
+    display: grid;
+    grid-template-columns: 17px minmax(0, 1fr);
+    align-items: center;
+    gap: 9px;
+  }
+
+  .account-setting-control::before {
+    width: 17px;
+    content: "";
+  }
+
+  .account-setting-control:has(.spin)::before {
+    display: none;
+  }
+
+  .account-setting-control .spin,
+  .account-data-button .spin {
+    margin: 0;
+    color: currentcolor;
+  }
+
+  .account-setting-control .spin {
+    color: var(--primary);
+  }
+
+  .account-setting-control select {
+    width: 100%;
+    min-height: 43px;
+    border: 1px solid var(--border);
+    padding: 0 36px 0 12px;
+    border-radius: 9px;
+    color: var(--text);
+    background: var(--input);
+    font-size: 13px;
+    font-weight: 620;
+  }
+
+  .account-setting-control select:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--primary) 38%, var(--border));
+  }
+
+  .account-page select:focus-visible,
+  .account-page button:focus-visible {
+    outline: 3px solid color-mix(in srgb, var(--primary) 30%, transparent);
+    outline-offset: 2px;
+  }
+
+  .account-settings-error {
+    margin: 14px 0;
+    padding: 12px 14px;
+    border: 1px solid color-mix(in srgb, var(--danger) 28%, var(--border));
+    border-radius: 9px;
+    background: color-mix(in srgb, var(--danger) 6%, var(--panel));
+  }
+
+  .account-data-actions {
+    display: grid;
+  }
+
+  .account-data-action {
+    display: grid;
+    min-height: 142px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 28px;
+    padding: 22px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .account-data-action:last-child {
+    border-bottom: 0;
+  }
+
+  .account-data-action h3 {
+    margin: 0 0 7px;
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .account-data-action p {
+    max-width: 680px;
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+
+  .account-data-action.is-danger {
+    position: relative;
+  }
+
+  .account-data-action.is-danger::before {
+    position: absolute;
+    top: 22px;
+    bottom: 22px;
+    left: -1px;
+    width: 2px;
+    background: var(--danger);
+    content: "";
+  }
+
+  .account-data-action.is-danger h3 {
+    color: var(--danger);
+  }
+
+  .account-data-button {
+    min-width: 190px;
+    white-space: nowrap;
+  }
+
+  .account-data-error {
+    grid-column: 2;
+    margin: 0 0 20px clamp(24px, 3vw, 40px);
+    padding: 12px 14px;
+    border: 1px solid color-mix(in srgb, var(--danger) 28%, var(--border));
+    border-radius: 9px;
+    background: color-mix(in srgb, var(--danger) 6%, var(--panel));
+  }
+
+  @media (max-width: 860px) {
+    .account-identity-section {
+      grid-template-columns: 1fr;
+    }
+
+    .account-identity-primary {
+      padding-right: 0;
+      border-right: 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .account-profile-facts > div:first-child {
+      padding-left: 0;
+    }
+
+    .account-sync-section,
+    .account-settings-section {
+      grid-template-columns: 1fr;
+      gap: 0;
+    }
+
+    .account-sync-heading,
+    .account-settings-section-heading {
+      padding: 24px 0 17px;
+    }
+
+    .account-sync-copy {
+      padding-bottom: 25px;
+    }
+
+    .account-settings-rows,
+    .account-data-actions {
+      padding-left: 0;
+      border-top: 1px solid var(--border);
+      border-left: 0;
+    }
+
+    .account-data-error {
+      grid-column: 1;
+      margin-left: 0;
+    }
+  }
+
+  @media (max-width: 620px) {
+    .account-page .profile-avatar {
+      width: 58px;
+      height: 58px;
+      flex-basis: 58px;
+      font-size: 23px;
+    }
+
+    .account-identity-primary {
+      padding-block: 22px;
+    }
+
+    .account-profile-facts {
+      grid-template-columns: 1fr;
+    }
+
+    .account-profile-facts > div,
+    .account-profile-facts > div:first-child {
+      grid-template-columns: minmax(110px, 0.8fr) minmax(0, 1.2fr);
+      align-items: baseline;
+      gap: 16px;
+      padding: 16px 0;
+      border-right: 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .account-profile-facts > div:last-child {
+      border-bottom: 0;
+    }
+
+    .account-profile-facts dd {
+      text-align: right;
+    }
+
+    .account-sync-section {
+      padding-block: 0;
+    }
+
+    .account-setting-row,
+    .account-data-action {
+      grid-template-columns: 1fr;
+      gap: 14px;
+    }
+
+    .account-setting-row {
+      padding: 19px 0;
+    }
+
+    .account-setting-control {
+      grid-template-columns: 17px minmax(0, 1fr);
+    }
+
+    .account-data-action {
+      align-items: stretch;
+      padding: 22px 0;
+    }
+
+    .account-data-button {
+      width: 100%;
+      min-width: 0;
+      min-height: 44px;
+    }
+
+    .account-data-action.is-danger::before {
+      top: 0;
+      bottom: auto;
+      left: 0;
+      width: 34px;
+      height: 2px;
+    }
+
+    .account-wipe-confirmation > div {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .account-wipe-confirmation input {
+      grid-column: 1 / -1;
+      width: 100%;
+    }
+  }
+}

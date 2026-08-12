@@ -3,6 +3,10 @@ const { contextBridge, ipcRenderer } = require("electron");
 /** @type {import('../src/desktop-contract').DesktopBridgeContract} */
 const desktopBridge = {
   loadState: () => ipcRenderer.invoke("workly:load-state"),
+  getLegacyImportStatus: () =>
+    ipcRenderer.invoke("workly:get-legacy-import-status"),
+  legacyImportAction: (action) =>
+    ipcRenderer.invoke("workly:legacy-import-action", action),
   executeCommand: (command) =>
     ipcRenderer.invoke("workly:execute-command", command),
   claimAuthenticatedAccount: () =>
@@ -10,6 +14,7 @@ const desktopBridge = {
   bootstrapAuthenticatedAccount: () =>
     ipcRenderer.invoke("workly:bootstrap-authenticated-account"),
   resetLocalData: () => ipcRenderer.invoke("workly:reset-local-data"),
+  rebuildLocalCache: () => ipcRenderer.invoke("workly:rebuild-local-cache"),
   getSyncSummary: () => ipcRenderer.invoke("workly:get-sync-summary"),
   getTimerLeaseStatus: () =>
     ipcRenderer.invoke("workly:get-timer-lease-status"),

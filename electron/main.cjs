@@ -6,8 +6,10 @@ const {
   Menu,
   safeStorage,
   screen,
+  session,
   shell,
 } = require("electron");
+const fs = require("node:fs");
 const path = require("node:path");
 const { SupabaseAuthService } = require("./auth-service.cjs");
 const { FxService } = require("./fx-service.cjs");
@@ -16,14 +18,21 @@ const {
   createOverlayTimerActionHandler,
 } = require("./overlay-timer-actions.cjs");
 const { TimerLeaseService } = require("./timer-lease-service.cjs");
-const { CommandService } = require("./command-service.cjs");
+const {
+  captureTimerIntentTimestamp,
+  CommandService,
+  createLocalMutationExecutor,
+} = require("./command-service.cjs");
 const {
   cloudSyncEligibility,
   resolveLocalAccountPrincipal,
 } = require("./local-account-policy.cjs");
 const { LocalStateRepository } = require("./state-repository.cjs");
 const { exportRecoveryCopy } = require("./recovery-export.cjs");
-const { SyncService } = require("./sync-service.cjs");
+const {
+  createCoalescedSyncExecutor,
+  SyncService,
+} = require("./sync-service.cjs");
 const {
   findOAuthCallbackUrl,
   getAllowedExternalOrigins,
@@ -31,6 +40,7 @@ const {
   normaliseAllowedExternalUrl,
   normaliseOAuthCallbackUrl,
 } = require("./navigation-security.cjs");
+const { installElectronSecurityHandlers } = require("./electron-security.cjs");
 
 const isDev = !app.isPackaged;
 const isPackagedSmokeTest =
@@ -46,9 +56,12 @@ let syncInterval;
 let syncContinuationTimer;
 let overlayManager;
 let pendingOAuthCallback;
-/** @type {Promise<any>} */
-let mutationQueue = Promise.resolve();
 let packagedSmokeTimeout;
+let legacyImportResult = { status: "not_found" };
+let cloudActivitySuppressed = false;
+
+const runSerializedMutation = createLocalMutationExecutor();
+const runCoalescedSync = createCoalescedSyncExecutor();
 
 const protocol = "timefarm";
 const devServerUrl = "http://127.0.0.1:5173";
@@ -235,21 +248,6 @@ function notifyTimerLeaseChanged(payload) {
     mainWindow.webContents.send("workly:timer-lease-changed", payload);
 }
 
-// Renderer and overlay actions can arrive while an online lease request is
-// pending. Serializing durable mutations keeps a preflight decision valid
-// until its command commits and prevents a late timer action from racing an
-// explicit reset, sign-out, or second timer action.
-/**
- * @template T
- * @param {() => Promise<T> | T} work
- * @returns {Promise<T>}
- */
-function runSerializedMutation(work) {
-  const run = mutationQueue.then(work, work);
-  mutationQueue = run.catch(() => {});
-  return run;
-}
-
 function publishSavedState(saved, { sync = false } = {}) {
   if (overlayManager) overlayManager.updateFromState(saved);
   notifyStateChanged(saved);
@@ -257,9 +255,59 @@ function publishSavedState(saved, { sync = false } = {}) {
   return saved;
 }
 
+function legacyImportNeedsRecovery() {
+  return ["invalid_data", "filesystem_error", "unsupported_version"].includes(
+    legacyImportResult?.status,
+  );
+}
+
+function publicLegacyImportStatus() {
+  const status = legacyImportResult?.status ?? "not_found";
+  return {
+    status,
+    ...(legacyImportResult?.errorCode
+      ? { errorCode: legacyImportResult.errorCode }
+      : {}),
+    ...(legacyImportResult?.version !== undefined
+      ? { version: legacyImportResult.version }
+      : {}),
+    ...(legacyImportResult?.warning
+      ? { warning: legacyImportResult.warning }
+      : {}),
+  };
+}
+
+function intentAwareCommandFacade(service) {
+  const intentTimestamps = new WeakMap();
+  return {
+    preflight(command) {
+      const intentTimestamp = captureTimerIntentTimestamp(command);
+      if (
+        intentTimestamp !== undefined &&
+        command &&
+        typeof command === "object"
+      )
+        intentTimestamps.set(command, intentTimestamp);
+      return service.preflight(command);
+    },
+    execute(command, options = {}) {
+      const intentTimestamp =
+        options.intentTimestamp ??
+        (command && typeof command === "object"
+          ? intentTimestamps.get(command)
+          : undefined);
+      if (command && typeof command === "object")
+        intentTimestamps.delete(command);
+      return service.execute(command, { intentTimestamp });
+    },
+  };
+}
+
 async function syncAndPublishNow() {
   if (!syncService || !repository)
     return { state: "not_ready", processed: 0, failed: 0 };
+  if (cloudActivitySuppressed)
+    return { state: "suppressed", processed: 0, failed: 0 };
   const account = repository.getAccount();
   if (!cloudSyncEligibility(account).eligible)
     return { state: "not_claimed", processed: 0, failed: 0 };
@@ -307,7 +355,7 @@ async function syncAndPublishNow() {
 }
 
 function syncAndPublish() {
-  return runSerializedMutation(syncAndPublishNow);
+  return runCoalescedSync(syncAndPublishNow);
 }
 
 async function acquireTimerLease(principal) {
@@ -413,22 +461,25 @@ async function assertLocalAccountPrincipal() {
   });
 }
 
-function emptyLocalState() {
-  return {
-    version: 1,
-    account: null,
-    projects: [],
-    sessions: [],
-    payments: [],
-    goals: [],
-    preferences: {
-      theme: "system",
-      miniTimerMode: "hidden",
-      dashboardHiddenWidgets: [],
-      dashboardWidgetOrder: [],
-      dashboardWidgetSizes: {},
-    },
-  };
+function removeDeviceAuxiliaryFiles(userDataPath) {
+  const names = [
+    "auth-session.bin",
+    "auth-oauth-pending.bin",
+    "fx-rates.json",
+    "fx-rates.json.tmp",
+    "mini-timer-position.json",
+    "timer-device-id.json",
+  ];
+  for (const name of names)
+    fs.rmSync(path.join(userDataPath, name), { force: true });
+  const remaining = names.filter((name) =>
+    fs.existsSync(path.join(userDataPath, name)),
+  );
+  if (remaining.length > 0)
+    throw new Error(
+      `TimeFarm could not remove ${remaining.length} device-local file(s).`,
+    );
+  return names;
 }
 
 function focusMainWindow() {
@@ -446,15 +497,16 @@ async function handleOAuthCallback(url) {
     return;
   }
   try {
-    const status = await runSerializedMutation(() =>
-      authService.handleOAuthCallback(callbackUrl),
-    );
+    const status = await authService.handleOAuthCallback(callbackUrl);
     if (status) notifyAuthChanged(status);
-  } catch {
+  } catch (error) {
     notifyAuthChanged({
       configured: authService.isConfigured(),
       authenticated: false,
-      error: "Google sign-in could not be completed.",
+      error:
+        error instanceof Error
+          ? error.message
+          : "Google sign-in could not be completed.",
     });
   }
 }
@@ -494,16 +546,18 @@ app.on("open-url", (event, url) => {
 app
   .whenReady()
   .then(() => {
+    installElectronSecurityHandlers({ app, session: session.defaultSession });
     Menu.setApplicationMenu(null);
     const userDataPath = app.getPath("userData");
     repository = new LocalStateRepository(path.join(userDataPath, "workly.db"));
-    repository.importLegacyJson(path.join(userDataPath, "workly-state.json"));
+    legacyImportResult = repository.importLegacyJson(
+      path.join(userDataPath, "workly-state.json"),
+    );
     commandService = new CommandService({ repository });
     authService = new SupabaseAuthService({ userDataPath, safeStorage });
     timerLeaseService = new TimerLeaseService({
       authService,
       userDataPath,
-      renewExecutor: runSerializedMutation,
     });
     syncService = new SyncService({ repository, authService });
     fxService = new FxService({
@@ -516,7 +570,7 @@ app
       positionFilePath: path.join(userDataPath, "mini-timer-position.json"),
       onAction: createOverlayTimerActionHandler({
         repository,
-        commandService,
+        commandService: intentAwareCommandFacade(commandService),
         acquireTimerLease,
         startLeaseRenewal: startTimerLeaseRenewal,
         onOpen: focusMainWindow,
@@ -544,15 +598,89 @@ app
       assertTrustedSender(event);
       return repository.loadState();
     });
+    ipcMain.handle("workly:get-legacy-import-status", (event) => {
+      assertTrustedSender(event);
+      return publicLegacyImportStatus();
+    });
+    ipcMain.handle("workly:legacy-import-action", (event, action) => {
+      assertTrustedSender(event);
+      const legacyPath = path.join(userDataPath, "workly-state.json");
+      if (action === "retry") {
+        return runSerializedMutation(() => {
+          legacyImportResult = repository.importLegacyJson(legacyPath);
+          if (legacyImportResult.status === "success")
+            publishSavedState(repository.loadState());
+          return publicLegacyImportStatus();
+        });
+      }
+      if (action === "open_data_folder") {
+        return shell.openPath(userDataPath).then((error) => {
+          if (error) throw new Error(error);
+          return publicLegacyImportStatus();
+        });
+      }
+      if (action === "export_recovery") {
+        return (async () => {
+          const destination = await dialog.showOpenDialog(mainWindow, {
+            title: "Choose where to save the TimeFarm recovery copy",
+            buttonLabel: "Export recovery copy",
+            properties: ["openDirectory", "createDirectory"],
+          });
+          if (!destination.canceled && destination.filePaths[0])
+            exportRecoveryCopy({
+              userDataPath,
+              parentDirectory: destination.filePaths[0],
+            });
+          return publicLegacyImportStatus();
+        })();
+      }
+      if (action === "skip") {
+        return (async () => {
+          const confirmation = await dialog.showMessageBox(mainWindow, {
+            type: "warning",
+            buttons: ["Cancel", "Skip this import"],
+            defaultId: 0,
+            cancelId: 0,
+            noLink: true,
+            title: "Skip legacy TimeFarm data?",
+            message: "Continue without importing the older TimeFarm workspace?",
+            detail:
+              "The source will be renamed and kept in the app data folder for manual recovery. A new workspace will not contain that history.",
+          });
+          if (confirmation.response === 1) {
+            legacyImportResult = await runSerializedMutation(() =>
+              repository.skipLegacyImport(legacyPath),
+            );
+          }
+          return publicLegacyImportStatus();
+        })();
+      }
+      throw new Error("Unsupported legacy import action.");
+    });
     ipcMain.handle("workly:execute-command", (event, command) => {
       assertTrustedSender(event);
-      return runSerializedMutation(async () => {
-        // This performs strict schema and timer-state validation without writing
-        // SQLite, so an invalid command cannot reserve a cross-device lease.
-        commandService.preflight(command);
+      // Capture factual timer intent before the first await. Auth and lease
+      // requests may be slow, but they must never stretch a work interval.
+      const intentTimestamp = captureTimerIntentTimestamp(command);
+      return (async () => {
+        if (
+          command?.type === "account.initialize" &&
+          legacyImportNeedsRecovery()
+        )
+          throw new Error(
+            "Resolve or explicitly skip the legacy data recovery before creating a new workspace.",
+          );
+        // Validate current local timer state before requesting a lease. This is
+        // a synchronous SQLite read and therefore a deliberately short queue
+        // section; all auth/network work below runs outside the queue.
+        await runSerializedMutation(() => commandService.preflight(command));
         const principal = await assertLocalAccountPrincipal();
         const leaseOutcome = await guardTimerLease(command, principal);
-        const response = commandService.execute(command);
+        const response = await runSerializedMutation(() => {
+          // State may have changed while the network request was pending.
+          commandService.preflight(command);
+          return commandService.execute(command, { intentTimestamp });
+        });
         // Initializing a profile only creates local data. Linking it to a cloud
         // identity remains an explicit, main-owned claim action, so a newly
         // opened device cannot silently push a different profile before consent.
@@ -571,11 +699,11 @@ app
           timerLeaseService.stopRenewal();
         publishSavedState(response.state, { sync: true });
         return response;
-      });
+      })();
     });
     ipcMain.handle("workly:claim-authenticated-account", (event) => {
       assertTrustedSender(event);
-      return runSerializedMutation(async () => {
+      return (async () => {
         const auth = await authService.getStatus();
         if (!auth.authenticated || !auth.user)
           throw new Error("Sign in before linking local data to an account.");
@@ -583,7 +711,9 @@ app
           throw new Error(
             "Connect to the internet before linking local data to a cloud account.",
           );
-        const localAccount = repository.getAccount();
+        const localAccount = await runSerializedMutation(() =>
+          repository.getAccount(),
+        );
         const claim = await syncService.claimCloudWorkspace(
           localAccount,
           auth.user.id,
@@ -597,14 +727,27 @@ app
             "This cloud account already has a workspace. TimeFarm kept the local data separate to prevent an automatic overwrite.",
           );
         }
-        const response = commandService.linkAuthenticatedAccount(auth.user.id);
+        const response = await runSerializedMutation(() => {
+          const currentAccount = repository.getAccount();
+          if (!currentAccount || currentAccount.id !== localAccount?.id)
+            throw new Error(
+              "Local account data changed while the cloud workspace was being linked. Try again.",
+            );
+          return commandService.linkAuthenticatedAccount(auth.user.id);
+        });
         publishSavedState(response.state, { sync: true });
         return response;
-      });
+      })();
     });
     ipcMain.handle("workly:bootstrap-authenticated-account", (event) => {
       assertTrustedSender(event);
-      return runSerializedMutation(async () => {
+      return (async () => {
+        if (legacyImportNeedsRecovery())
+          return {
+            state: "failed",
+            error:
+              "Resolve or explicitly skip the legacy data recovery before restoring cloud data.",
+          };
         if (repository.hasAccount()) return { state: "already_initialized" };
         const auth = await authService.getStatus();
         if (!auth.configured) return { state: "not_configured" };
@@ -615,9 +758,19 @@ app
         // the existing account after reconnect.
         if (auth.offline) return { state: "offline" };
         try {
-          const result = await syncService.bootstrapAuthenticatedAccount(
+          const remote = await syncService.getCloudBootstrapSnapshot(
             auth.user.id,
           );
+          if (remote.state !== "ready") return { state: remote.state };
+          if (remote.data.found !== true) return { state: "not_found" };
+          const result = await runSerializedMutation(() => {
+            if (repository.hasAccount())
+              return { state: "already_initialized" };
+            return syncService.applyCloudBootstrapSnapshot(
+              auth.user.id,
+              remote.data,
+            );
+          });
           if (result.state === "restored") {
             publishSavedState(result.saved);
             return { state: "restored" };
@@ -632,32 +785,117 @@ app
                 : "Cloud bootstrap failed.",
           };
         }
-      });
+      })();
     });
     ipcMain.handle("workly:reset-local-data", (event) => {
       assertTrustedSender(event);
-      return runSerializedMutation(async () => {
+      return (async () => {
         const confirmation = await dialog.showMessageBox(mainWindow, {
           type: "warning",
-          buttons: ["Cancel", "Delete local data"],
+          buttons: ["Cancel", "Wipe this device"],
           defaultId: 0,
           cancelId: 0,
           noLink: true,
-          title: "Clear TimeFarm local data?",
-          message: "Delete all TimeFarm data stored on this Windows account?",
+          title: "Wipe TimeFarm data from this device?",
+          message: "Remove this device's TimeFarm workspace and sign-in?",
           detail:
-            "This removes the local database and any legacy import backup. Cloud data is not deleted. This action cannot be undone.",
+            "This signs out, removes local workspace rows, truncates SQLite journals, compacts the database, and deletes local recovery backups. Cloud data is not deleted. Storage hardware may retain forensic remnants, so this is not a cryptographic erase.",
         });
         if (confirmation.response !== 1)
           return { cancelled: true, state: repository.loadState() };
-        const saved = repository.replaceState(emptyLocalState());
-        repository.clearLegacyDataFiles(
-          path.join(app.getPath("userData"), "workly-state.json"),
-        );
+        cloudActivitySuppressed = true;
+        syncService.cancelPendingSync?.();
         timerLeaseService.stopRenewal();
-        publishSavedState(saved);
-        return { cancelled: false, state: saved };
-      });
+        if (syncContinuationTimer) {
+          clearTimeout(syncContinuationTimer);
+          syncContinuationTimer = undefined;
+        }
+        pendingOAuthCallback = undefined;
+        try {
+          const authStatus = await authService.signOut();
+          notifyAuthChanged(authStatus);
+          await mainWindow?.webContents?.session?.clearStorageData?.();
+          const wiped = await runSerializedMutation(() => {
+            const result = repository.wipeDeviceData(
+              path.join(userDataPath, "workly-state.json"),
+            );
+            removeDeviceAuxiliaryFiles(userDataPath);
+            return result;
+          });
+          legacyImportResult = { status: "not_found" };
+          timerLeaseService = new TimerLeaseService({
+            authService,
+            userDataPath,
+          });
+          fxService = new FxService({
+            cacheFilePath: path.join(userDataPath, "fx-rates.json"),
+          });
+          publishSavedState(wiped.state);
+          return {
+            cancelled: false,
+            state: wiped.state,
+            verification: wiped.verification,
+          };
+        } finally {
+          cloudActivitySuppressed = false;
+        }
+      })();
+    });
+    ipcMain.handle("workly:rebuild-local-cache", (event) => {
+      assertTrustedSender(event);
+      return (async () => {
+        const principal = await assertLocalAccountPrincipal();
+        if (!principal.linked || principal.offline || !principal.auth?.user?.id)
+          throw new Error(
+            "Connect as the linked account before rebuilding local cache.",
+          );
+        if (repository.hasActiveSession())
+          throw new Error(
+            "Finish or discard the active timer before rebuilding local cache.",
+          );
+        const summary = repository.getSyncSummary();
+        if (summary.queued || summary.failed || summary.conflicts)
+          throw new Error(
+            "Sync or resolve every local change before rebuilding local cache.",
+          );
+        const confirmation = await dialog.showMessageBox(mainWindow, {
+          type: "warning",
+          buttons: ["Cancel", "Rebuild from cloud"],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+          title: "Rebuild local cache from cloud?",
+          message:
+            "Replace this settled local cache with a fresh cloud snapshot?",
+          detail:
+            "TimeFarm fetches and validates the snapshot before replacing local data. This is unavailable while local work is pending.",
+        });
+        if (confirmation.response !== 1)
+          return { cancelled: true, state: repository.loadState() };
+
+        cloudActivitySuppressed = true;
+        syncService.cancelPendingSync?.();
+        try {
+          const remote = await syncService.getCloudBootstrapSnapshot(
+            principal.auth.user.id,
+          );
+          if (remote.state !== "ready" || remote.data?.found !== true)
+            throw new Error(
+              "A complete cloud workspace snapshot is unavailable; local cache was not changed.",
+            );
+          const result = await runSerializedMutation(() =>
+            syncService.applyCloudBootstrapSnapshot(
+              principal.auth.user.id,
+              remote.data,
+              { replaceExisting: true },
+            ),
+          );
+          publishSavedState(result.saved);
+          return { cancelled: false, state: result.saved };
+        } finally {
+          cloudActivitySuppressed = false;
+        }
+      })();
     });
     ipcMain.handle("workly:overlay:get-preferences", (event) => {
       assertTrustedSender(event);
@@ -665,15 +903,17 @@ app
     });
     ipcMain.handle("workly:overlay:set-preferences", (event, input) => {
       assertTrustedSender(event);
-      return runSerializedMutation(async () => {
+      return (async () => {
         const next = input && typeof input === "object" ? input : {};
         if (Object.hasOwn(next, "mode")) {
           if (repository.hasAccount()) {
             await assertLocalAccountPrincipal();
-            const response = commandService.execute({
-              type: "preferences.update",
-              payload: { miniTimerMode: normaliseMode(next.mode) },
-            });
+            const response = await runSerializedMutation(() =>
+              commandService.execute({
+                type: "preferences.update",
+                payload: { miniTimerMode: normaliseMode(next.mode) },
+              }),
+            );
             publishSavedState(response.state, { sync: true });
           } else {
             overlayManager.setPreferences({ mode: normaliseMode(next.mode) });
@@ -682,16 +922,28 @@ app
         if (Object.hasOwn(next, "position"))
           overlayManager.setPreferences({ position: next.position });
         return overlayManager.getPreferences();
-      });
+      })();
     });
     ipcMain.handle("workly:overlay:action", (event, action) => {
       assertOverlaySender(event);
-      return runSerializedMutation(async () => {
+      const commandType =
+        action === "pause"
+          ? "session.pause"
+          : action === "resume"
+            ? "session.resume"
+            : undefined;
+      const intentTimestamp = commandType
+        ? captureTimerIntentTimestamp({ type: commandType, payload: {} })
+        : undefined;
+      return (async () => {
         if (action === "open" || action === "stop")
           return overlayManager.handleAction(action);
         await assertLocalAccountPrincipal();
-        return overlayManager.handleAction(action);
-      });
+        // The overlay handler revalidates and commits synchronously after its
+        // optional lease request. Do not hold the SQLite queue across that
+        // background request.
+        return overlayManager.handleAction(action, { intentTimestamp });
+      })();
     });
     ipcMain.handle("workly:get-sync-summary", (event) => {
       assertTrustedSender(event);
@@ -703,7 +955,7 @@ app
     });
     ipcMain.handle("workly:acquire-timer-lease", (event) => {
       assertTrustedSender(event);
-      return runSerializedMutation(async () => {
+      return (async () => {
         if (!repository.hasActiveSession()) {
           throw new Error(
             "An active local timer is required before acquiring a cloud timer lease.",
@@ -711,9 +963,12 @@ app
         }
         const principal = await assertLocalAccountPrincipal();
         const outcome = await acquireTimerLease(principal);
-        if (outcome.state === "acquired") startTimerLeaseRenewal();
+        if (outcome.state === "acquired") {
+          if (repository.hasActiveSession()) startTimerLeaseRenewal();
+          else timerLeaseService.stopRenewal();
+        }
         return outcome;
-      });
+      })();
     });
     ipcMain.handle("workly:get-sync-conflicts", (event, limit) => {
       assertTrustedSender(event);
@@ -723,23 +978,28 @@ app
     });
     ipcMain.handle("workly:resolve-sync-conflict", (event, conflictId) => {
       assertTrustedSender(event);
-      return runSerializedMutation(async () => {
+      return (async () => {
         await assertLocalAccountPrincipal();
-        const resolved = repository.resolveSyncConflict(conflictId);
-        if (resolved) publishSavedState(repository.loadState(), { sync: true });
-        return { resolved, summary: repository.getSyncSummary() };
-      });
+        return runSerializedMutation(() => {
+          const resolved = repository.resolveSyncConflict(conflictId);
+          if (resolved)
+            publishSavedState(repository.loadState(), { sync: true });
+          return { resolved, summary: repository.getSyncSummary() };
+        });
+      })();
     });
     ipcMain.handle(
       "workly:accept-remote-sync-conflict",
       (event, conflictId) => {
         assertTrustedSender(event);
-        return runSerializedMutation(async () => {
+        return (async () => {
           await assertLocalAccountPrincipal();
-          const result = repository.acceptRemoteSyncConflict(conflictId);
-          if (result.accepted) publishSavedState(repository.loadState());
-          return { ...result, summary: repository.getSyncSummary() };
-        });
+          return runSerializedMutation(() => {
+            const result = repository.acceptRemoteSyncConflict(conflictId);
+            if (result.accepted) publishSavedState(repository.loadState());
+            return { ...result, summary: repository.getSyncSummary() };
+          });
+        })();
       },
     );
     ipcMain.handle("workly:fx-status", (event) => {
@@ -772,38 +1032,36 @@ app
     });
     ipcMain.handle("workly:get-auth-status", async (event) => {
       assertTrustedSender(event);
-      return runSerializedMutation(() => authService.getStatus());
+      return authService.getStatus();
     });
     ipcMain.handle("workly:auth-sign-up", (event, input) => {
       assertTrustedSender(event);
-      return runSerializedMutation(async () => {
+      return (async () => {
         const result = await authService.signUp(input ?? {});
         notifyAuthChanged(result.status);
         return result;
-      });
+      })();
     });
     ipcMain.handle("workly:auth-sign-in", (event, input) => {
       assertTrustedSender(event);
-      return runSerializedMutation(async () => {
+      return (async () => {
         const status = await authService.signIn(input ?? {});
         notifyAuthChanged(status);
         return status;
-      });
+      })();
     });
     ipcMain.handle("workly:auth-google", (event) => {
       assertTrustedSender(event);
-      return runSerializedMutation(() =>
-        authService.beginGoogleSignIn(openAllowedExternalUrl),
-      );
+      return authService.beginGoogleSignIn(openAllowedExternalUrl);
     });
     ipcMain.handle("workly:auth-sign-out", (event) => {
       assertTrustedSender(event);
-      return runSerializedMutation(async () => {
+      return (async () => {
         timerLeaseService.stopRenewal();
         const status = await authService.signOut();
         notifyAuthChanged(status);
         return status;
-      });
+      })();
     });
     if (isPackagedSmokeTest && !repository.hasAccount()) {
       commandService.execute({
@@ -822,7 +1080,7 @@ app
     const account = repository.getAccount();
     if (account) void fxService.refresh(account.currency);
     if (repository.hasActiveSession()) {
-      void runSerializedMutation(() => acquireTimerLease()).then((outcome) => {
+      void acquireTimerLease().then((outcome) => {
         if (outcome.state === "acquired") startTimerLeaseRenewal();
       });
     }

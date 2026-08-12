@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   Check,
   CircleDollarSign,
@@ -9,6 +9,7 @@ import {
   Square,
   Target,
 } from "lucide-react";
+import { goalTargetIssue } from "../domain/goals";
 import { formatMoney, moneyFromInput, moneyToInput } from "../domain/money";
 import {
   activeDurationMs,
@@ -44,6 +45,22 @@ function label(
   return translate(language, "workspace", key);
 }
 
+function localizedMutationError(
+  language: AppLanguage,
+  vietnameseSummary: string,
+  englishSummary: string,
+  detail?: unknown,
+): string {
+  const summary = language === "vi" ? vietnameseSummary : englishSummary;
+  const detailMessage =
+    detail instanceof Error
+      ? detail.message
+      : typeof detail === "string"
+        ? detail
+        : "";
+  return detailMessage ? `${summary} ${detailMessage}` : summary;
+}
+
 function StartSessionDialog({
   onClose,
   onStarted,
@@ -59,8 +76,9 @@ function StartSessionDialog({
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const startInFlightRef = useRef(false);
   const start = async () => {
-    if (busy) return;
+    if (startInFlightRef.current) return;
     if (quick && !name.trim()) {
       setMessage(
         language === "vi"
@@ -69,6 +87,7 @@ function StartSessionDialog({
       );
       return;
     }
+    startInFlightRef.current = true;
     setBusy(true);
     setMessage("");
     try {
@@ -82,11 +101,28 @@ function StartSessionDialog({
           })
         : await startSession(selected);
       if (!result.ok) {
-        setMessage(result.message);
+        setMessage(
+          localizedMutationError(
+            language,
+            "Không thể bắt đầu phiên.",
+            "The session could not be started.",
+            result.message,
+          ),
+        );
         return;
       }
       onStarted();
+    } catch (startError) {
+      setMessage(
+        localizedMutationError(
+          language,
+          "Không thể bắt đầu phiên.",
+          "The session could not be started.",
+          startError,
+        ),
+      );
     } finally {
+      startInFlightRef.current = false;
       setBusy(false);
     }
   };
@@ -101,6 +137,7 @@ function StartSessionDialog({
           : "Choose where you will spend this time. An unassigned session is always okay."
       }
       onClose={onClose}
+      locked={busy}
     >
       <div className="project-picker">
         <button
@@ -195,7 +232,7 @@ function StartSessionDialog({
         </button>
         <button
           disabled={busy}
-          className="button primary"
+          className="button start-action"
           onClick={() => {
             void start();
           }}
@@ -236,9 +273,11 @@ function CompleteSessionDialog({
   const endAt = requestedEndAt ?? new Date(now).toISOString();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const submitInFlightRef = useRef(false);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (busy) return;
+    if (submitInFlightRef.current) return;
+    submitInFlightRef.current = true;
     setBusy(true);
     setError("");
     try {
@@ -248,11 +287,28 @@ function CompleteSessionDialog({
         requestedEndAt,
       );
       if (!result.ok) {
-        setError(result.message);
+        setError(
+          localizedMutationError(
+            language,
+            "Không thể hoàn tất phiên.",
+            "The session could not be completed.",
+            result.message,
+          ),
+        );
         return;
       }
       onClose();
+    } catch (completionError) {
+      setError(
+        localizedMutationError(
+          language,
+          "Không thể hoàn tất phiên.",
+          "The session could not be completed.",
+          completionError,
+        ),
+      );
     } finally {
+      submitInFlightRef.current = false;
       setBusy(false);
     }
   };
@@ -267,6 +323,7 @@ function CompleteSessionDialog({
           : "Record the money you actually earned. Zero is valid."
       }
       onClose={onClose}
+      locked={busy}
     >
       <form onSubmit={submit} aria-busy={busy}>
         <div className="completion-summary">
@@ -420,6 +477,7 @@ function ProjectDialog({
   const [icon, setIcon] = useState(project?.icon ?? "✦");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const submitInFlightRef = useRef(false);
   const input = (): NewProjectInput => ({
     name,
     paymentModel,
@@ -431,7 +489,7 @@ function ProjectDialog({
   });
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (busy) return;
+    if (submitInFlightRef.current) return;
     if (!name.trim()) {
       setError(
         language === "vi"
@@ -440,6 +498,7 @@ function ProjectDialog({
       );
       return;
     }
+    submitInFlightRef.current = true;
     setBusy(true);
     setError("");
     try {
@@ -447,11 +506,32 @@ function ProjectDialog({
         ? await updateProject(project.id, input())
         : await createProject(input());
       if (!result.ok) {
-        setError(result.message);
+        setError(
+          localizedMutationError(
+            language,
+            project ? "Không thể cập nhật dự án." : "Không thể tạo dự án.",
+            project
+              ? "The project could not be updated."
+              : "The project could not be created.",
+            result.message,
+          ),
+        );
         return;
       }
       onClose();
+    } catch (projectError) {
+      setError(
+        localizedMutationError(
+          language,
+          project ? "Không thể cập nhật dự án." : "Không thể tạo dự án.",
+          project
+            ? "The project could not be updated."
+            : "The project could not be created.",
+          projectError,
+        ),
+      );
     } finally {
+      submitInFlightRef.current = false;
       setBusy(false);
     }
   };
@@ -472,6 +552,7 @@ function ProjectDialog({
           : "Payment context never replaces the actual earnings recorded per session."
       }
       onClose={onClose}
+      locked={busy}
     >
       <form onSubmit={submit} aria-busy={busy}>
         <Field label={language === "vi" ? "Tên dự án" : "Project name"}>
@@ -950,6 +1031,7 @@ function GoalDialog({ goal, onClose }: { goal?: Goal; onClose: () => void }) {
   );
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const submitInFlightRef = useRef(false);
   const unit = goalLabels[kind].unit;
   const updateKind = (next: GoalKind) => {
     if (goalLabels[next].unit !== unit) setTarget("");
@@ -958,7 +1040,7 @@ function GoalDialog({ goal, onClose }: { goal?: Goal; onClose: () => void }) {
   };
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (busy) return;
+    if (submitInFlightRef.current) return;
     const numeric = Number(target);
     if (!Number.isFinite(numeric) || numeric <= 0) {
       setError(
@@ -968,6 +1050,7 @@ function GoalDialog({ goal, onClose }: { goal?: Goal; onClose: () => void }) {
       );
       return;
     }
+    submitInFlightRef.current = true;
     setBusy(true);
     setError("");
     try {
@@ -975,15 +1058,53 @@ function GoalDialog({ goal, onClose }: { goal?: Goal; onClose: () => void }) {
         unit === "money"
           ? moneyFromInput(target, app.account!.currency).amountMinor
           : numeric;
+      const targetIssue = goalTargetIssue(kind, stored);
+      if (targetIssue) {
+        setError(
+          language === "vi"
+            ? targetIssue === "project_count_not_integer"
+              ? "Mục tiêu dự án phải là một số nguyên."
+              : targetIssue === "not_safe_integer"
+                ? "Mục tiêu vượt phạm vi số an toàn hoặc không phải đơn vị tiền nguyên."
+                : "Mục tiêu phải lớn hơn 0."
+            : targetIssue === "project_count_not_integer"
+              ? "A project goal must be a whole number."
+              : targetIssue === "not_safe_integer"
+                ? "The target exceeds the safe numeric range or is not a whole minor-unit amount."
+                : "Goal target must be greater than zero.",
+        );
+        return;
+      }
       const result = goal
         ? await updateGoal(goal.id, kind, stored)
         : await createGoal(kind, stored);
       if (!result.ok) {
-        setError(result.message);
+        setError(
+          localizedMutationError(
+            language,
+            goal ? "Không thể cập nhật mục tiêu." : "Không thể tạo mục tiêu.",
+            goal
+              ? "The goal could not be updated."
+              : "The goal could not be created.",
+            result.message,
+          ),
+        );
         return;
       }
       onClose();
+    } catch (goalError) {
+      setError(
+        localizedMutationError(
+          language,
+          goal ? "Không thể cập nhật mục tiêu." : "Không thể tạo mục tiêu.",
+          goal
+            ? "The goal could not be updated."
+            : "The goal could not be created.",
+          goalError,
+        ),
+      );
     } finally {
+      submitInFlightRef.current = false;
       setBusy(false);
     }
   };
@@ -1004,6 +1125,7 @@ function GoalDialog({ goal, onClose }: { goal?: Goal; onClose: () => void }) {
           : "Goals use your actual data, never a fixed wage."
       }
       onClose={onClose}
+      locked={busy}
     >
       <form onSubmit={submit} aria-busy={busy}>
         <Field label={language === "vi" ? "Loại mục tiêu" : "Goal type"}>
@@ -1030,8 +1152,8 @@ function GoalDialog({ goal, onClose }: { goal?: Goal; onClose: () => void }) {
             type="number"
             data-autofocus
             disabled={busy}
-            min="0"
-            step="any"
+            min={unit === "count" ? "1" : "0.01"}
+            step={unit === "count" ? "1" : "any"}
             value={target}
             onChange={(event) => setTarget(event.target.value)}
             placeholder={
@@ -1213,6 +1335,9 @@ function RecoveryDialog({
   const [endLocal, setEndLocal] = useState("");
   const [error, setError] = useState("");
   const [lease, setLease] = useState<TimerLeaseStatus | null>(null);
+  const [busy, setBusy] = useState<"continue" | "discard" | null>(null);
+  const mutationInFlightRef = useRef(false);
+  const now = useCurrentTime(true, 60_000);
   useEffect(() => {
     const desktop = window.worklyDesktop;
     if (!desktop) return undefined;
@@ -1223,22 +1348,40 @@ function RecoveryDialog({
     return desktop.onTimerLeaseChanged?.(setLease);
   }, []);
   const continueSession = async () => {
-    const desktop = window.worklyDesktop;
-    if (desktop?.acquireTimerLease) {
-      const outcome = await desktop.acquireTimerLease();
-      setLease(outcome);
-      if (outcome.state === "held_by_other") {
-        setError(
-          language === "vi"
-            ? "Một thiết bị khác đang giữ quyền timer cho tài khoản này. Hãy kết thúc hoặc chờ phiên đó trước."
-            : "Another device currently holds this account’s timer lease. Finish or wait for that session first.",
-        );
-        return;
+    if (mutationInFlightRef.current) return;
+    mutationInFlightRef.current = true;
+    setBusy("continue");
+    setError("");
+    try {
+      const desktop = window.worklyDesktop;
+      if (desktop?.acquireTimerLease) {
+        const outcome = await desktop.acquireTimerLease();
+        setLease(outcome);
+        if (outcome.state === "held_by_other") {
+          setError(
+            language === "vi"
+              ? "Một thiết bị khác đang giữ quyền timer cho tài khoản này. Hãy kết thúc hoặc chờ phiên đó trước."
+              : "Another device currently holds this account’s timer lease. Finish or wait for that session first.",
+          );
+          return;
+        }
       }
+      onContinue();
+    } catch (continueError) {
+      setError(
+        continueError instanceof Error
+          ? continueError.message
+          : language === "vi"
+            ? "Không thể tiếp tục phiên. Vui lòng thử lại."
+            : "The session could not be continued. Please try again.",
+      );
+    } finally {
+      mutationInFlightRef.current = false;
+      setBusy(null);
     }
-    onContinue();
   };
   const discard = async () => {
+    if (mutationInFlightRef.current) return;
     if (
       window.confirm(
         language === "vi"
@@ -1246,15 +1389,36 @@ function RecoveryDialog({
           : "Discard this unfinished session? This cannot be undone.",
       )
     ) {
-      const result = await discardSession(session.id);
-      if (!result.ok) {
-        setError(result.message);
-        return;
+      mutationInFlightRef.current = true;
+      setBusy("discard");
+      setError("");
+      try {
+        const result = await discardSession(session.id);
+        if (!result.ok) {
+          setError(
+            language === "vi"
+              ? `Không thể bỏ phiên. ${result.message}`
+              : `The session could not be discarded. ${result.message}`,
+          );
+          return;
+        }
+        onContinue();
+      } catch (discardError) {
+        setError(
+          discardError instanceof Error
+            ? discardError.message
+            : language === "vi"
+              ? "Không thể bỏ phiên. Vui lòng thử lại."
+              : "The session could not be discarded. Please try again.",
+        );
+      } finally {
+        mutationInFlightRef.current = false;
+        setBusy(null);
       }
-      onContinue();
     }
   };
   const completeAtChosenTime = () => {
+    if (mutationInFlightRef.current) return;
     const endAt = new Date(endLocal);
     if (
       !endLocal ||
@@ -1268,6 +1432,15 @@ function RecoveryDialog({
       );
       return;
     }
+    if (endAt.getTime() > Date.now()) {
+      setError(
+        language === "vi"
+          ? "Thời điểm kết thúc không được nằm trong tương lai."
+          : "Choose an end time that is not in the future.",
+      );
+      return;
+    }
+    setError("");
     onComplete(endAt.toISOString());
   };
   return (
@@ -1298,17 +1471,28 @@ function RecoveryDialog({
           </span>
         </div>
       </div>
-      <div className="recovery-options">
+      <div className="recovery-options" aria-busy={busy !== null}>
         <button
+          type="button"
           className="button primary"
+          disabled={busy !== null}
           onClick={() => {
             void continueSession();
           }}
         >
-          <Play size={17} fill="currentColor" />{" "}
+          {busy === "continue" ? (
+            <LoaderCircle size={17} className="spin" />
+          ) : (
+            <Play size={17} fill="currentColor" />
+          )}{" "}
           {language === "vi" ? "Tiếp tục phiên" : "Continue session"}
         </button>
-        <button className="button ghost" onClick={() => onComplete()}>
+        <button
+          type="button"
+          className="button ghost"
+          disabled={busy !== null}
+          onClick={() => onComplete()}
+        >
           <Square size={15} fill="currentColor" />{" "}
           {language === "vi" ? "Kết thúc ngay" : "End now"}
         </button>
@@ -1319,33 +1503,47 @@ function RecoveryDialog({
               : "Or end at (device timezone)"}
             <input
               type="datetime-local"
+              disabled={busy !== null}
               value={endLocal}
               min={formatDateTimeLocalInput(session.startedAt)}
+              max={formatDateTimeLocalInput(new Date(now).toISOString())}
               onChange={(event) => {
                 setEndLocal(event.target.value);
                 setError("");
               }}
             />
           </label>
-          <button className="button ghost" onClick={completeAtChosenTime}>
+          <button
+            type="button"
+            className="button ghost"
+            disabled={busy !== null}
+            onClick={completeAtChosenTime}
+          >
             <Clock3 size={15} />{" "}
             {language === "vi" ? "Dùng thời điểm này" : "Use this time"}
           </button>
         </div>
         {lease?.state === "held_by_other" && (
-          <p className="form-error">
+          <p className="form-error" role="status" aria-live="polite">
             {language === "vi"
               ? "Thiết bị khác đang giữ timer. Bạn vẫn có thể kết thúc hoặc bỏ phiên local này."
               : "Another device holds the timer. You can still end or discard this local session."}
           </p>
         )}
-        {error && <p className="form-error">{error}</p>}
+        {error && (
+          <p className="form-error" role="alert" aria-live="assertive">
+            {error}
+          </p>
+        )}
         <button
+          type="button"
           className="text-button danger-text"
+          disabled={busy !== null}
           onClick={() => {
             void discard();
           }}
         >
+          {busy === "discard" && <LoaderCircle size={15} className="spin" />}{" "}
           {language === "vi" ? "Bỏ phiên này" : "Discard session"}
         </button>
       </div>

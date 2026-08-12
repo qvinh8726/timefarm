@@ -5,6 +5,10 @@ const {
   IdentifierSchema,
   TimeZoneSchema,
 } = require("./command-contract.cjs");
+const { goalTargetIssue } = require("./goal-validation.cjs");
+const {
+  compareCompletedSessionsNewestFirst,
+} = require("./session-ordering.cjs");
 
 class CommandError extends Error {
   constructor(code, message, details) {
@@ -78,6 +82,51 @@ function normaliseTimestamp(value, code) {
   return new Date(milliseconds).toISOString();
 }
 
+const INTENT_TIMESTAMP_COMMANDS = new Set([
+  "session.pause",
+  "session.resume",
+  "session.complete",
+  "session.recover-complete",
+]);
+
+/**
+ * Captures the main-process receipt time for timer actions whose factual time
+ * must not drift while auth, lease, or other asynchronous work is pending.
+ * The renderer cannot provide this value.
+ */
+function captureTimerIntentTimestamp(rawCommand, clock = () => new Date()) {
+  if (!INTENT_TIMESTAMP_COMMANDS.has(rawCommand?.type)) return undefined;
+  if (typeof clock !== "function")
+    throw new TypeError("Timer intent clock must be a function.");
+  return normaliseTimestamp(clock(), "INVALID_INTENT_CLOCK");
+}
+
+/**
+ * Serializes synchronous local database transactions. Async callbacks are
+ * rejected deliberately: no auth or network promise may hold this queue.
+ */
+function createLocalMutationExecutor() {
+  let queue = Promise.resolve();
+  return function runLocalMutation(work) {
+    if (typeof work !== "function")
+      return Promise.reject(
+        new TypeError("A local mutation callback must be a function."),
+      );
+    const invoke = () => {
+      const result = work();
+      if (result && typeof result.then === "function") {
+        throw new TypeError(
+          "Local mutation callbacks must be synchronous; run auth and network work outside the SQLite queue.",
+        );
+      }
+      return result;
+    };
+    const run = queue.then(invoke, invoke);
+    queue = run.catch(() => {});
+    return run;
+  };
+}
+
 function defaultTimezone() {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   try {
@@ -117,12 +166,7 @@ function activeSession(state) {
 function latestCompletedSession(state) {
   return state.sessions
     .filter((session) => session.status === "completed")
-    .sort(
-      (left, right) =>
-        dateMs(right.endedAt ?? right.startedAt) -
-          dateMs(left.endedAt ?? left.startedAt) ||
-        right.id.localeCompare(left.id),
-    )[0];
+    .sort(compareCompletedSessionsNewestFirst)[0];
 }
 
 function calculateActiveDuration(session, endedAt) {
@@ -218,6 +262,11 @@ function goalFor(state, goalId) {
       { goalId },
     );
   return goal;
+}
+
+function requireValidGoalTarget(kind, target) {
+  const issue = goalTargetIssue(kind, target);
+  if (issue) fail("INVALID_GOAL_TARGET", issue, { kind, target });
 }
 
 function requireAccount(state) {
@@ -328,10 +377,14 @@ class CommandService {
     return { command: commandType, state, result };
   }
 
-  execute(rawCommand) {
+  /**
+   * @param {unknown} rawCommand
+   * @param {{intentTimestamp?: unknown}} [options]
+   */
+  execute(rawCommand, { intentTimestamp } = {}) {
     const command = parseCommand(rawCommand);
     const state = this.repository.loadState();
-    const transition = this.transition(state, command);
+    const transition = this.transition(state, command, { intentTimestamp });
     return this.persist(command.type, transition.state, transition.result);
   }
 
@@ -389,7 +442,8 @@ class CommandService {
     );
   }
 
-  transition(state, command) {
+  /** @param {any} state @param {any} command @param {{intentTimestamp?: unknown}} [options] */
+  transition(state, command, { intentTimestamp } = {}) {
     const { payload } = command;
     switch (command.type) {
       case "account.initialize":
@@ -409,13 +463,13 @@ class CommandService {
       case "session.start":
         return this.startSession(state, payload);
       case "session.pause":
-        return this.pauseSession(state);
+        return this.pauseSession(state, intentTimestamp);
       case "session.resume":
-        return this.resumeSession(state);
+        return this.resumeSession(state, intentTimestamp);
       case "session.complete":
-        return this.completeSession(state, payload);
+        return this.completeSession(state, payload, intentTimestamp);
       case "session.recover-complete":
-        return this.completeSession(state, payload);
+        return this.recoverCompletedSession(state, payload, intentTimestamp);
       case "session.discard":
         return this.discardSession(state, payload);
       case "session.edit-latest":
@@ -631,7 +685,7 @@ class CommandService {
     };
   }
 
-  pauseSession(state) {
+  pauseSession(state, intentTimestamp) {
     requireAccount(state);
     const session = activeSession(state);
     if (!session)
@@ -640,7 +694,10 @@ class CommandService {
       fail("SESSION_NOT_RUNNING", "Only a running session can be paused.", {
         sessionId: session.id,
       });
-    const timestamp = this.now();
+    const timestamp =
+      intentTimestamp === undefined
+        ? this.now()
+        : normaliseTimestamp(intentTimestamp, "INVALID_INTENT_TIMESTAMP");
     if (dateMs(timestamp) < dateMs(session.startedAt))
       fail(
         "CLOCK_BEFORE_SESSION",
@@ -664,10 +721,13 @@ class CommandService {
     };
   }
 
-  resumeSession(state) {
+  resumeSession(state, intentTimestamp) {
     const session = this.assertSessionResumeAllowed(state);
     const lastPause = session.pauses.at(-1);
-    const timestamp = this.now();
+    const timestamp =
+      intentTimestamp === undefined
+        ? this.now()
+        : normaliseTimestamp(intentTimestamp, "INVALID_INTENT_TIMESTAMP");
     if (dateMs(timestamp) < dateMs(lastPause.startedAt))
       fail(
         "CLOCK_BEFORE_PAUSE",
@@ -736,7 +796,7 @@ class CommandService {
     return session;
   }
 
-  completeSession(state, payload) {
+  completeSession(state, payload, intentTimestamp) {
     requireAccount(state);
     const session = activeSession(state);
     if (!session || session.id !== payload.sessionId) {
@@ -746,7 +806,11 @@ class CommandService {
         { sessionId: payload.sessionId },
       );
     }
-    const endedAt = payload.endedAt ?? this.now();
+    const endedAt =
+      payload.endedAt ??
+      (intentTimestamp === undefined
+        ? this.now()
+        : normaliseTimestamp(intentTimestamp, "INVALID_INTENT_TIMESTAMP"));
     const activeDurationMs = calculateActiveDuration(session, endedAt);
     const sessionNext = {
       ...session,
@@ -768,6 +832,21 @@ class CommandService {
       },
       result: { sessionId: session.id, activeDurationMs },
     };
+  }
+
+  recoverCompletedSession(state, payload, intentTimestamp) {
+    const receivedAt =
+      intentTimestamp === undefined
+        ? normaliseTimestamp(this.now(), "INVALID_RECOVERY_CLOCK")
+        : normaliseTimestamp(intentTimestamp, "INVALID_INTENT_TIMESTAMP");
+    if (dateMs(payload.endedAt) > dateMs(receivedAt)) {
+      fail(
+        "SESSION_END_IN_FUTURE",
+        "A recovered session cannot end in the future.",
+        { endedAt: payload.endedAt, receivedAt },
+      );
+    }
+    return this.completeSession(state, payload);
   }
 
   discardSession(state, payload) {
@@ -888,6 +967,7 @@ class CommandService {
 
   createGoal(state, payload) {
     requireAccount(state);
+    requireValidGoalTarget(payload.kind, payload.target);
     const goal = {
       id: this.newId(),
       kind: payload.kind,
@@ -910,6 +990,7 @@ class CommandService {
       ...(payload.target !== undefined ? { target: payload.target } : {}),
       syncStatus: "queued",
     };
+    requireValidGoalTarget(goalNext.kind, goalNext.target);
     return {
       state: {
         ...state,
@@ -947,9 +1028,11 @@ function createCommandService(options) {
 }
 
 module.exports = {
+  captureTimerIntentTimestamp,
   CommandError,
   CommandService,
   CommandValidationError,
+  createLocalMutationExecutor,
   createCommandService,
   parseCommand,
 };

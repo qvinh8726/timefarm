@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   BarChart3,
@@ -15,11 +15,11 @@ import {
   cumulativeSeries,
   durationDistribution,
   goalUnit,
+  liveRangeSummary,
   periodComparison,
   projectBreakdown,
   projectEfficiencyRanking,
   rangeDailySeries,
-  rangeSummary,
   resolveRange,
   sessionContribution,
   type AnalyticsRange,
@@ -34,14 +34,10 @@ import {
 } from "../domain/types";
 import { translate, type TranslationKey } from "../i18n";
 import { useCurrentTime } from "../lib/clock";
-import { useAppStore } from "../lib/state";
+import { useAppStoreState } from "../lib/state";
 import {
-  ChartCard,
   EmptyState,
   GoalPace,
-  MetricCard,
-  PeriodComparisonCard,
-  ProjectBreakdownCard,
   ProjectGlyph,
   TrendChart,
   formatGoalProgressValue,
@@ -66,7 +62,7 @@ const analyticsPresets: { id: AnalyticsRangePreset; label: string }[] = [
 ];
 
 function AnalyticsPage() {
-  const { state } = useAppStore();
+  const { state } = useAppStoreState();
   const app = state!;
   const account = app.account!;
   const language = account.language;
@@ -91,6 +87,7 @@ function AnalyticsPage() {
       account.currency,
       nextRange,
       language,
+      clock,
     );
     const scoped = app.sessions.filter(
       (session) =>
@@ -99,10 +96,20 @@ function AnalyticsPage() {
     );
     return {
       range: nextRange,
-      summary: rangeSummary(app.sessions, account.currency, nextRange),
+      summary: liveRangeSummary(
+        app.sessions,
+        account.currency,
+        nextRange,
+        clock,
+      ),
       series: nextSeries,
       cumulative: cumulativeSeries(nextSeries),
-      comparison: periodComparison(app.sessions, account.currency, nextRange),
+      comparison: periodComparison(
+        app.sessions,
+        account.currency,
+        nextRange,
+        clock,
+      ),
       projects: projectBreakdown(
         app.sessions,
         app.projects,
@@ -141,14 +148,9 @@ function AnalyticsPage() {
   ]);
   const rangeLabel = analyticsRangeLabel(preset, language);
   return (
-    <>
-      <div className="page-heading heading-with-action">
+    <div className="analytics-ledger">
+      <header className="analytics-page-header">
         <div>
-          <span className="eyebrow">
-            {language === "vi"
-              ? "THẤY XU HƯỚNG, KHÔNG ĐOÁN MÒ"
-              : "SEE PATTERNS, NOT GUESSWORK"}
-          </span>
           <h1>{label(language, "analytics")}</h1>
           <p>
             {language === "vi"
@@ -156,140 +158,164 @@ function AnalyticsPage() {
               : "Figures are clipped to the selected range and account timezone; money stays in its original currency."}
           </p>
         </div>
-        <div className="range-switch">
+        <fieldset className="analytics-range-switch">
+          <legend className="analytics-visually-hidden">
+            {language === "vi" ? "Phạm vi phân tích" : "Analytics range"}
+          </legend>
           {analyticsPresets.map((item) => (
             <button
+              type="button"
               key={item.id}
               onClick={() => setPreset(item.id)}
               className={preset === item.id ? "active" : ""}
+              aria-pressed={preset === item.id}
+              aria-label={`${item.label}: ${analyticsRangeLabel(item.id, language)}`}
             >
               {item.label}
             </button>
           ))}
-        </div>
-      </div>
-      <section className="metric-grid analytics-metrics">
-        <MetricCard
-          icon={<Clock3 />}
-          label={language === "vi" ? "Tổng giờ hiệu dụng" : "Active work time"}
-          value={formatDuration(summary.activeMs, true, language)}
-          hint={rangeLabel}
-          tone="blue"
-        />
-        <MetricCard
-          icon={<CircleDollarSign />}
-          label={
-            language === "vi" ? "Thu nhập nguyên gốc" : "Original earnings"
-          }
-          value={formatMoney(
-            { amountMinor: summary.earningsMinor, currency: account.currency },
-            language,
-          )}
-          hint={`${account.currency} · ${formatMoney({ amountMinor: Math.round(summary.averageEarningsMinorPerDay), currency: account.currency }, language)} / ${language === "vi" ? "ngày" : "day"}`}
-          tone="green"
-        />
-        <MetricCard
-          icon={<TrendingUp />}
-          label={label(language, "efficiency")}
-          value={
-            summary.effectiveHourlyMinor === null
-              ? "—"
-              : formatMoney(
-                  {
-                    amountMinor: summary.effectiveHourlyMinor,
-                    currency: account.currency,
-                  },
-                  language,
-                )
-          }
-          hint={
-            summary.effectiveHourlyMinor === null
-              ? language === "vi"
-                ? "Cần ít nhất 1 phút làm việc"
-                : "Needs at least one minute"
-              : `${formatDuration(summary.averageActiveMsPerDay, true, language)} / ${language === "vi" ? "ngày" : "day"}`
-          }
-          tone="violet"
-        />
-        <MetricCard
-          icon={<History />}
-          label={label(language, "sessions")}
-          value={String(summary.sessionCount)}
-          hint={
-            language === "vi"
-              ? "Có phần thời gian thuộc phạm vi"
-              : "Intersecting completed sessions"
-          }
-          tone="orange"
-        />
-      </section>
-      {overlap.overlapMs > 0 && (
-        <OverlapNotice overlap={overlap} language={language} />
-      )}
-      {foreign.length > 0 && (
-        <FxNotice
-          foreign={foreign}
-          accountCurrency={account.currency}
-          language={language}
-        />
-      )}
-      <section className="analytics-grid">
-        <ChartCard
+        </fieldset>
+      </header>
+
+      <section className="analytics-overview">
+        <AnalyticsChart
+          primary
           title={language === "vi" ? "Thu nhập theo ngày" : "Daily earnings"}
           subtitle={`${account.currency} · ${rangeLabel}`}
-        >
-          <TrendChart
-            points={series.map((point) => ({
-              label: point.label,
-              value: point.earningsMinor,
-            }))}
-            money
-            currency={account.currency}
-            language={language}
-          />
-        </ChartCard>
-        <ChartCard
-          title={language === "vi" ? "Giờ làm theo ngày" : "Daily work hours"}
-          subtitle={
-            language === "vi"
-              ? "Chỉ tính thời gian không tạm dừng"
-              : "Paused intervals are excluded"
+          points={series.map((point) => ({
+            label: point.label,
+            value: point.earningsMinor,
+          }))}
+          money
+          currency={account.currency}
+          language={language}
+        />
+        <aside className="analytics-summary-rail">
+          <header>
+            <h2>{language === "vi" ? "Tóm tắt phạm vi" : "Range summary"}</h2>
+            <span>{rangeLabel}</span>
+          </header>
+          <dl>
+            <AnalyticsMetric
+              icon={<Clock3 />}
+              label={
+                language === "vi" ? "Tổng giờ hiệu dụng" : "Active work time"
+              }
+              value={formatDuration(summary.activeMs, true, language)}
+              hint={rangeLabel}
+            />
+            <AnalyticsMetric
+              icon={<CircleDollarSign />}
+              label={
+                language === "vi" ? "Thu nhập nguyên gốc" : "Original earnings"
+              }
+              value={formatMoney(
+                {
+                  amountMinor: summary.earningsMinor,
+                  currency: account.currency,
+                },
+                language,
+              )}
+              hint={`${account.currency} · ${formatMoney({ amountMinor: Math.round(summary.averageEarningsMinorPerDay), currency: account.currency }, language)} / ${language === "vi" ? "ngày" : "day"}`}
+            />
+            <AnalyticsMetric
+              icon={<TrendingUp />}
+              label={label(language, "efficiency")}
+              value={
+                summary.effectiveHourlyMinor === null
+                  ? "—"
+                  : formatMoney(
+                      {
+                        amountMinor: summary.effectiveHourlyMinor,
+                        currency: account.currency,
+                      },
+                      language,
+                    )
+              }
+              hint={
+                summary.effectiveHourlyMinor === null
+                  ? language === "vi"
+                    ? "Cần ít nhất 1 phút làm việc"
+                    : "Needs at least one minute"
+                  : `${formatDuration(summary.averageActiveMsPerDay, true, language)} / ${language === "vi" ? "ngày" : "day"}`
+              }
+            />
+            <AnalyticsMetric
+              icon={<History />}
+              label={label(language, "sessions")}
+              value={String(summary.sessionCount)}
+              hint={
+                language === "vi"
+                  ? "Có phần thời gian thuộc phạm vi"
+                  : "Intersecting completed sessions"
+              }
+            />
+          </dl>
+        </aside>
+      </section>
+
+      {(overlap.overlapMs > 0 || foreign.length > 0) && (
+        <div className="analytics-notices">
+          {overlap.overlapMs > 0 && (
+            <OverlapNotice overlap={overlap} language={language} />
+          )}
+          {foreign.length > 0 && (
+            <FxNotice
+              foreign={foreign}
+              accountCurrency={account.currency}
+              language={language}
+            />
+          )}
+        </div>
+      )}
+
+      <section className="analytics-detail-section">
+        <AnalyticsSectionHeading
+          title={
+            language === "vi" ? "Tín hiệu theo thời gian" : "Signals over time"
           }
-        >
-          <TrendChart
+          description={
+            language === "vi"
+              ? "Nhịp làm việc theo ngày trước, sau đó mới đến góc nhìn tích luỹ."
+              : "Daily rhythm comes first; cumulative views show what it adds up to."
+          }
+        />
+        <div className="analytics-signal-grid">
+          <AnalyticsChart
+            className="analytics-chart--work"
+            title={language === "vi" ? "Giờ làm theo ngày" : "Daily work hours"}
+            subtitle={
+              language === "vi"
+                ? "Chỉ tính thời gian không tạm dừng"
+                : "Paused intervals are excluded"
+            }
             points={series.map((point) => ({
               label: point.label,
               value: point.activeMs / 3_600_000,
             }))}
             language={language}
           />
-        </ChartCard>
-        <ChartCard
-          title={
-            language === "vi"
-              ? "Thu nhập / giờ theo ngày"
-              : "Daily effective rate"
-          }
-          subtitle={
-            language === "vi"
-              ? `Chỉ dùng thời gian của phiên có thu nhập ${account.currency}`
-              : `Uses time only from sessions earned in ${account.currency}`
-          }
-        >
-          <TrendChart
+          <AnalyticsChart
+            title={
+              language === "vi"
+                ? "Thu nhập / giờ theo ngày"
+                : "Daily effective rate"
+            }
+            subtitle={
+              language === "vi"
+                ? `Chỉ dùng thời gian của phiên có thu nhập ${account.currency}`
+                : `Uses time only from sessions earned in ${account.currency}`
+            }
             points={dailyRates}
             money
             currency={account.currency}
             language={language}
           />
-        </ChartCard>
-        <ChartCard
-          title={
-            language === "vi" ? "Thu nhập tích luỹ" : "Cumulative earnings"
-          }
-          subtitle={`${account.currency} · ${rangeLabel}`}
-        >
-          <TrendChart
+          <AnalyticsChart
+            title={
+              language === "vi" ? "Thu nhập tích luỹ" : "Cumulative earnings"
+            }
+            subtitle={`${account.currency} · ${rangeLabel}`}
             points={cumulative.map((point) => ({
               label: point.label,
               value: point.earningsMinor,
@@ -298,72 +324,168 @@ function AnalyticsPage() {
             currency={account.currency}
             language={language}
           />
-        </ChartCard>
-        <ChartCard
-          title={
-            language === "vi" ? "Giờ làm tích luỹ" : "Cumulative work hours"
-          }
-          subtitle={rangeLabel}
-        >
-          <TrendChart
+          <AnalyticsChart
+            title={
+              language === "vi" ? "Giờ làm tích luỹ" : "Cumulative work hours"
+            }
+            subtitle={rangeLabel}
             points={cumulative.map((point) => ({
               label: point.label,
               value: point.activeMs / 3_600_000,
             }))}
             language={language}
           />
-        </ChartCard>
-        <ProjectBreakdownCard
-          entries={projects}
-          language={language}
-          currency={account.currency}
-          subtitle={rangeLabel}
-        />
-        <ProjectBreakdownCard
-          entries={projects}
-          language={language}
-          currency={account.currency}
-          mode="earnings"
-          title={
-            language === "vi" ? "Thu nhập theo dự án" : "Earnings by project"
-          }
-          subtitle={`${account.currency} · ${rangeLabel}`}
-        />
-        <PeriodComparisonCard
-          comparison={comparison}
-          language={language}
-          title={
-            language === "vi"
-              ? "So với kỳ trước: thời gian"
-              : "Work time vs previous period"
-          }
-          metric="time"
-        />
-        <PeriodComparisonCard
-          comparison={comparison}
-          language={language}
-          currency={account.currency}
-          title={
-            language === "vi"
-              ? "So với kỳ trước: thu nhập"
-              : "Earnings vs previous period"
-          }
-          metric="earnings"
-        />
-        <DurationDistributionCard entries={durations} language={language} />
-        <EfficiencyRankingCard
-          entries={efficiency}
-          language={language}
-          currency={account.currency}
-        />
-        <GoalProgressAnalyticsCard range={range} />
-        <InsightsCard
-          entries={projects}
-          sessionCount={summary.sessionCount}
-          comparison={comparison}
-        />
+        </div>
       </section>
-    </>
+
+      <section className="analytics-detail-section">
+        <AnalyticsSectionHeading
+          title={language === "vi" ? "Sổ cái dự án" : "Project ledger"}
+          description={
+            language === "vi"
+              ? "Thời gian, thu nhập nguyên tệ và hiệu suất vẫn truy được về từng dự án."
+              : "Time, original earnings, and effective rates stay attributable to each project."
+          }
+        />
+        <div className="analytics-project-layout">
+          <div className="analytics-project-ledgers">
+            <ProjectBreakdownLedger
+              entries={projects}
+              language={language}
+              currency={account.currency}
+              subtitle={rangeLabel}
+            />
+            <ProjectBreakdownLedger
+              entries={projects}
+              language={language}
+              currency={account.currency}
+              mode="earnings"
+              title={
+                language === "vi"
+                  ? "Thu nhập theo dự án"
+                  : "Earnings by project"
+              }
+              subtitle={`${account.currency} · ${rangeLabel}`}
+            />
+          </div>
+          <EfficiencyRankingCard
+            entries={efficiency}
+            language={language}
+            currency={account.currency}
+          />
+        </div>
+      </section>
+
+      <section className="analytics-detail-section analytics-detail-section--context">
+        <AnalyticsSectionHeading
+          title={
+            language === "vi" ? "Bối cảnh và mục tiêu" : "Context and goals"
+          }
+          description={
+            language === "vi"
+              ? "Đối chiếu kỳ trước, hình dạng phiên làm việc và nhịp mục tiêu hiện tại."
+              : "Prior-period context, session shape, and the current goal pace."
+          }
+        />
+        <div className="analytics-context-grid">
+          <PeriodComparisonLedger
+            comparison={comparison}
+            language={language}
+            currency={account.currency}
+          />
+          <DurationDistributionCard entries={durations} language={language} />
+          <GoalProgressAnalyticsCard range={range} />
+          <InsightsCard
+            entries={projects}
+            sessionCount={summary.sessionCount}
+            comparison={comparison}
+          />
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function AnalyticsMetric({
+  icon,
+  label: metricLabel,
+  value,
+  hint,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  hint: string;
+}) {
+  return (
+    <div className="analytics-summary-metric">
+      <dt>
+        <span aria-hidden="true">{icon}</span>
+        {metricLabel}
+      </dt>
+      <dd>
+        <strong>{value}</strong>
+        <small>{hint}</small>
+      </dd>
+    </div>
+  );
+}
+
+function AnalyticsChart({
+  title,
+  subtitle,
+  points,
+  language,
+  money,
+  currency,
+  primary = false,
+  className = "",
+}: {
+  title: string;
+  subtitle: string;
+  points: { label: string; value: number }[];
+  language: AppLanguage;
+  money?: boolean;
+  currency?: CurrencyCode;
+  primary?: boolean;
+  className?: string;
+}) {
+  const titleId = useId();
+  const Heading = primary ? "h2" : "h3";
+  return (
+    <article
+      className={`analytics-chart ${primary ? "analytics-chart--primary" : ""} ${className}`.trim()}
+      aria-labelledby={titleId}
+    >
+      <header>
+        <div>
+          <Heading id={titleId}>{title}</Heading>
+          <p>{subtitle}</p>
+        </div>
+        <BarChart3 size={18} aria-hidden="true" />
+      </header>
+      <TrendChart
+        points={points}
+        money={money}
+        currency={currency}
+        language={language}
+      />
+    </article>
+  );
+}
+
+function AnalyticsSectionHeading({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <header className="analytics-section-heading">
+      <h2>{title}</h2>
+      <p>{description}</p>
+    </header>
   );
 }
 
@@ -375,8 +497,8 @@ function OverlapNotice({
   language: AppLanguage;
 }) {
   return (
-    <div className="notice overlap-notice" role="status">
-      <AlertTriangle size={17} />
+    <div className="notice analytics-notice overlap-notice" role="status">
+      <AlertTriangle size={17} aria-hidden="true" />
       <span>
         {language === "vi"
           ? `${overlap.affectedSessionCount} phiên hoàn tất có thời gian hoạt động chồng nhau (${formatDuration(overlap.overlapMs, true, language)}). Tổng giờ và mục tiêu chỉ tính thời gian duy nhất; thu nhập và phân bổ theo dự án vẫn giữ từng phiên để không làm mất dữ liệu.`
@@ -470,8 +592,8 @@ function FxNotice({
     .join(" · ");
   if (!window.worklyDesktop)
     return (
-      <div className="notice">
-        <Globe2 size={17} />
+      <div className="notice analytics-notice" role="status">
+        <Globe2 size={17} aria-hidden="true" />
         <span>
           {language === "vi"
             ? `Có thu nhập ở tiền tệ khác: ${source}. Bản xem trước không truy cập provider FX.`
@@ -485,9 +607,11 @@ function FxNotice({
     : null;
   return (
     <div
-      className={`notice fx-notice ${status?.state === "stale" ? "stale" : ""}`}
+      className={`notice analytics-notice fx-notice ${status?.state === "stale" ? "stale" : ""}`}
+      role="status"
+      aria-live="polite"
     >
-      <Globe2 size={17} />
+      <Globe2 size={17} aria-hidden="true" />
       <span>
         {unavailable ? (
           language === "vi" ? (
@@ -522,7 +646,12 @@ function FxNotice({
           </>
         )}{" "}
       </span>
-      <button className="text-button" onClick={refresh} disabled={refreshing}>
+      <button
+        type="button"
+        className="text-button"
+        onClick={refresh}
+        disabled={refreshing}
+      >
         {refreshing
           ? language === "vi"
             ? "Đang cập nhật…"
@@ -560,6 +689,241 @@ function analyticsRangeLabel(
   return labels[preset];
 }
 
+function ProjectBreakdownLedger({
+  entries,
+  language,
+  currency,
+  title,
+  subtitle,
+  mode = "time",
+}: {
+  entries: ReturnType<typeof projectBreakdown>;
+  language: AppLanguage;
+  currency: CurrencyCode;
+  title?: string;
+  subtitle: string;
+  mode?: "time" | "earnings";
+}) {
+  const { state } = useAppStoreState();
+  const projects = state!.projects;
+  const titleId = useId();
+  const isEarnings = mode === "earnings";
+  const max = Math.max(
+    ...entries.map((entry) =>
+      isEarnings ? entry.earningsMinor : entry.activeMs,
+    ),
+    1,
+  );
+  const resolvedTitle =
+    title ?? (language === "vi" ? "Dự án chiếm thời gian" : "Time by project");
+  return (
+    <article
+      className="analytics-ledger-panel analytics-project-breakdown"
+      aria-labelledby={titleId}
+    >
+      <header className="analytics-panel-heading">
+        <div>
+          <h3 id={titleId}>{resolvedTitle}</h3>
+          <p>{subtitle}</p>
+        </div>
+      </header>
+      {entries.length === 0 ? (
+        <EmptyState
+          compact
+          icon={<BarChart3 />}
+          title={
+            language === "vi" ? "Chưa có dữ liệu dự án" : "No project data yet"
+          }
+          description={
+            language === "vi"
+              ? "Bắt đầu phiên có gắn dự án để theo dõi."
+              : "Start a project-linked session to see a breakdown."
+          }
+        />
+      ) : (
+        <div className="analytics-project-list">
+          {entries.slice(0, 5).map((entry) => {
+            const primary = isEarnings ? entry.earningsMinor : entry.activeMs;
+            const primaryText = isEarnings
+              ? formatMoney({ amountMinor: primary, currency }, language)
+              : formatDuration(primary, true, language);
+            const secondary = isEarnings
+              ? formatDuration(entry.activeMs, true, language)
+              : entry.earningsMinor > 0
+                ? formatMoney(
+                    { amountMinor: entry.earningsMinor, currency },
+                    language,
+                  )
+                : null;
+            const project = entry.projectId
+              ? projects.find((item) => item.id === entry.projectId)
+              : undefined;
+            const projectName = entry.name || label(language, "noProject");
+            const percentage = (primary / max) * 100;
+            return (
+              <div
+                className="analytics-project-row"
+                key={entry.projectId ?? "none"}
+              >
+                <div className="analytics-project-row-heading">
+                  <span
+                    className="color-dot"
+                    style={{ background: entry.color }}
+                    aria-hidden="true"
+                  />
+                  <strong>
+                    <span
+                      className="inline-project-glyph"
+                      aria-hidden="true"
+                      style={{ color: entry.color }}
+                    >
+                      <ProjectGlyph icon={project?.icon} size={14} />
+                    </span>{" "}
+                    {projectName}
+                  </strong>
+                  <span>{primaryText}</span>
+                </div>
+                <div
+                  className="analytics-progress-track"
+                  role="meter"
+                  aria-label={`${projectName}: ${primaryText}`}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(percentage)}
+                  aria-valuetext={primaryText}
+                >
+                  <span
+                    style={{
+                      width: primary > 0 ? `${Math.max(4, percentage)}%` : "0%",
+                      background: entry.color,
+                    }}
+                  />
+                </div>
+                {secondary && <small>{secondary}</small>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function PeriodComparisonLedger({
+  comparison,
+  language,
+  currency,
+}: {
+  comparison: ReturnType<typeof periodComparison>;
+  language: AppLanguage;
+  currency: CurrencyCode;
+}) {
+  return (
+    <article className="analytics-ledger-panel analytics-comparison-ledger">
+      <header className="analytics-panel-heading">
+        <div>
+          <h3>{language === "vi" ? "So với kỳ trước" : "Previous period"}</h3>
+          <p>
+            {language === "vi"
+              ? "Cùng độ dài phạm vi, ngay trước kỳ đang chọn"
+              : "The equally sized range immediately before this one"}
+          </p>
+        </div>
+        <TrendingUp size={18} aria-hidden="true" />
+      </header>
+      <div className="analytics-comparison-list">
+        <ComparisonMetric
+          comparison={comparison}
+          language={language}
+          currency={currency}
+          metric="time"
+        />
+        <ComparisonMetric
+          comparison={comparison}
+          language={language}
+          currency={currency}
+          metric="earnings"
+        />
+      </div>
+    </article>
+  );
+}
+
+function ComparisonMetric({
+  comparison,
+  language,
+  currency,
+  metric,
+}: {
+  comparison: ReturnType<typeof periodComparison>;
+  language: AppLanguage;
+  currency: CurrencyCode;
+  metric: "time" | "earnings";
+}) {
+  const isTime = metric === "time";
+  const current = isTime
+    ? comparison.current.activeMs
+    : comparison.current.earningsMinor;
+  const previous = isTime
+    ? comparison.previous.activeMs
+    : comparison.previous.earningsMinor;
+  const change = isTime ? comparison.activeMsChange : comparison.earningsChange;
+  const max = Math.max(current, previous, 1);
+  const title = isTime
+    ? language === "vi"
+      ? "Thời gian"
+      : "Work time"
+    : language === "vi"
+      ? "Thu nhập"
+      : "Earnings";
+  const value = (amount: number) =>
+    isTime
+      ? formatDuration(amount, true, language)
+      : formatMoney({ amountMinor: amount, currency }, language);
+  const changeText =
+    change === null
+      ? language === "vi"
+        ? "Chưa có mốc so sánh"
+        : "No prior baseline"
+      : `${change >= 0 ? "+" : ""}${change.toFixed(0)}% ${language === "vi" ? "so với kỳ trước" : "vs prior period"}`;
+  return (
+    <section className="analytics-comparison-metric" aria-label={title}>
+      <header>
+        <h4>{title}</h4>
+        <span>{changeText}</span>
+      </header>
+      {[
+        {
+          id: "current",
+          label: language === "vi" ? "Kỳ này" : "Current",
+          amount: current,
+        },
+        {
+          id: "previous",
+          label: language === "vi" ? "Kỳ trước" : "Previous",
+          amount: previous,
+        },
+      ].map((entry) => (
+        <div className="analytics-comparison-row" key={entry.id}>
+          <span>{entry.label}</span>
+          <strong>{value(entry.amount)}</strong>
+          <div
+            className="analytics-progress-track"
+            role="meter"
+            aria-label={`${title}, ${entry.label}: ${value(entry.amount)}`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round((entry.amount / max) * 100)}
+            aria-valuetext={value(entry.amount)}
+          >
+            <span style={{ width: `${(entry.amount / max) * 100}%` }} />
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
 function DurationDistributionCard({
   entries,
   language,
@@ -569,8 +933,8 @@ function DurationDistributionCard({
 }) {
   const max = Math.max(...entries.map((entry) => entry.count), 1);
   return (
-    <article className="panel distribution-card">
-      <div className="panel-heading">
+    <article className="analytics-ledger-panel analytics-duration">
+      <header className="analytics-panel-heading">
         <div>
           <h3>
             {language === "vi"
@@ -583,15 +947,22 @@ function DurationDistributionCard({
               : "Sessions are bucketed by in-range active time"}
           </p>
         </div>
-        <Clock3 size={18} />
-      </div>
-      <div className="bar-list">
+        <Clock3 size={18} aria-hidden="true" />
+      </header>
+      <div className="analytics-duration-list">
         {entries.map((entry) => (
           <div key={entry.id}>
             <span>{entry.label}</span>
-            <i>
-              <b style={{ width: `${(entry.count / max) * 100}%` }} />
-            </i>
+            <div
+              className="analytics-progress-track"
+              role="meter"
+              aria-label={`${entry.label}: ${entry.count}`}
+              aria-valuemin={0}
+              aria-valuemax={max}
+              aria-valuenow={entry.count}
+            >
+              <span style={{ width: `${(entry.count / max) * 100}%` }} />
+            </div>
             <strong>{entry.count}</strong>
           </div>
         ))}
@@ -609,11 +980,11 @@ function EfficiencyRankingCard({
   language: AppLanguage;
   currency: CurrencyCode;
 }) {
-  const { state } = useAppStore();
+  const { state } = useAppStoreState();
   const projects = state!.projects;
   return (
-    <article className="panel efficiency-card">
-      <div className="panel-heading">
+    <article className="analytics-ledger-panel analytics-efficiency">
+      <header className="analytics-panel-heading">
         <div>
           <h3>
             {language === "vi"
@@ -626,8 +997,8 @@ function EfficiencyRankingCard({
               : "Rates use matching original currency only"}
           </p>
         </div>
-        <TrendingUp size={18} />
-      </div>
+        <TrendingUp size={18} aria-hidden="true" />
+      </header>
       {entries.length === 0 ? (
         <EmptyState
           compact
@@ -642,13 +1013,13 @@ function EfficiencyRankingCard({
           }
         />
       ) : (
-        <div className="ranking-list">
+        <ol className="analytics-ranking-list">
           {entries.slice(0, 5).map((entry, index) => {
             const project = entry.projectId
               ? projects.find((item) => item.id === entry.projectId)
               : undefined;
             return (
-              <div key={entry.projectId ?? "none"}>
+              <li key={entry.projectId ?? "none"}>
                 <span className="rank-number">{index + 1}</span>
                 <span
                   className="color-dot"
@@ -674,24 +1045,24 @@ function EfficiencyRankingCard({
                         language,
                       )}
                 </b>
-              </div>
+              </li>
             );
           })}
-        </div>
+        </ol>
       )}
     </article>
   );
 }
 
 function GoalProgressAnalyticsCard({ range }: { range: AnalyticsRange }) {
-  const { state } = useAppStore();
+  const { state } = useAppStoreState();
   const app = state!;
   const account = app.account!;
   const language = account.language;
   const now = new Date(range.endMs);
   return (
-    <article className="panel analytics-goals">
-      <div className="panel-heading">
+    <article className="analytics-ledger-panel analytics-goals-ledger">
+      <header className="analytics-panel-heading">
         <div>
           <h3>{language === "vi" ? "Tiến độ mục tiêu" : "Goal progress"}</h3>
           <p>
@@ -700,8 +1071,8 @@ function GoalProgressAnalyticsCard({ range }: { range: AnalyticsRange }) {
               : "Goals against the current pace"}
           </p>
         </div>
-        <Target size={18} />
-      </div>
+        <Target size={18} aria-hidden="true" />
+      </header>
       {app.goals.length === 0 ? (
         <EmptyState
           compact
@@ -714,7 +1085,7 @@ function GoalProgressAnalyticsCard({ range }: { range: AnalyticsRange }) {
           }
         />
       ) : (
-        <div className="analytics-goal-list">
+        <div className="analytics-goal-ledger-list">
           {app.goals.slice(0, 4).map((goal) => {
             const progress = calculateGoalProgress(
               goal,
@@ -728,13 +1099,27 @@ function GoalProgressAnalyticsCard({ range }: { range: AnalyticsRange }) {
               <div key={goal.id}>
                 <div>
                   <strong>{goalLabels[goal.kind][language]}</strong>
-                  <span className={`goal-status ${progress.status}`}>
+                  <span className={`analytics-goal-status ${progress.status}`}>
                     {goalStatusLabel(progress.status, language)}
                   </span>
                 </div>
-                <i>
-                  <b style={{ width: `${progress.percentage}%` }} />
-                </i>
+                <div
+                  className="analytics-progress-track"
+                  role="progressbar"
+                  aria-label={goalLabels[goal.kind][language]}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(progress.percentage)}
+                  aria-valuetext={formatGoalProgressValue(
+                    progress.current,
+                    progress.target,
+                    goalUnit(goal.kind),
+                    account.currency,
+                    language,
+                  )}
+                >
+                  <span style={{ width: `${progress.percentage}%` }} />
+                </div>
                 <small>
                   {formatGoalProgressValue(
                     progress.current,
@@ -776,13 +1161,13 @@ function InsightsCard({
   sessionCount: number;
   comparison: ReturnType<typeof periodComparison>;
 }) {
-  const { state } = useAppStore();
+  const { state } = useAppStoreState();
   const language = state!.account!.language;
   const top = entries[0];
   const change = comparison.activeMsChange;
   return (
-    <article className="panel insights-card">
-      <div className="panel-heading">
+    <article className="analytics-ledger-panel analytics-insights">
+      <header className="analytics-panel-heading">
         <div>
           <h3>
             {language === "vi"
@@ -795,8 +1180,8 @@ function InsightsCard({
               : "No claims when data is insufficient"}
           </p>
         </div>
-        <TrendingUp size={18} />
-      </div>
+        <TrendingUp size={18} aria-hidden="true" />
+      </header>
       {sessionCount < 2 ? (
         <EmptyState
           compact
@@ -809,8 +1194,8 @@ function InsightsCard({
           }
         />
       ) : (
-        <div className="insight">
-          <span className="insight-dot" />
+        <div className="analytics-insight">
+          <span className="analytics-insight-dot" aria-hidden="true" />
           <p>
             {top ? (
               language === "vi" ? (

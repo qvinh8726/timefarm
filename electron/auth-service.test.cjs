@@ -72,6 +72,16 @@ async function flushMicrotasks(count = 4) {
   for (let index = 0; index < count; index += 1) await Promise.resolve();
 }
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 function manualClock(initialNow = 1_000_000) {
   let current = initialNow;
   return {
@@ -282,6 +292,101 @@ test("times out a hanging remote user verification instead of blocking status", 
     assert.equal(status.authenticated, true);
     assert.equal(status.offline, true);
     assert.equal(fs.existsSync(service.sessionPath), true);
+  }));
+
+test("bounds password sign-up and sign-in and ignores their late responses", async () =>
+  withTemporaryDirectory(async (directory) => {
+    for (const operation of ["signUp", "signInWithPassword"]) {
+      const timeoutScheduler = manualTimeoutScheduler();
+      const service = configuredService(directory, {
+        operationTimeoutMs: 1,
+        timeoutScheduler,
+      });
+      const response = deferred();
+      let persisted = 0;
+      service.persistSession = () => {
+        persisted += 1;
+      };
+      service.client = {
+        auth: { [operation]: () => response.promise },
+      };
+
+      const pending =
+        operation === "signUp"
+          ? service.signUp({
+              email: "minh@example.com",
+              password: "password-1",
+              displayName: "Minh",
+            })
+          : service.signIn({
+              email: "minh@example.com",
+              password: "password-1",
+            });
+      assert.equal(timeoutScheduler.pendingCount(), 1);
+      timeoutScheduler.fireNext();
+      await assert.rejects(
+        pending,
+        new RegExp(
+          `Supabase Auth ${operation === "signUp" ? "sign up" : "sign in"} timed out after 1ms`,
+        ),
+      );
+
+      response.resolve({ data: { session: storedSession }, error: null });
+      await flushMicrotasks();
+      assert.equal(persisted, 0);
+    }
+  }));
+
+test("times out OAuth start and exchange without retaining a usable late flow", async () =>
+  withTemporaryDirectory(async (directory) => {
+    const timeoutScheduler = manualTimeoutScheduler();
+    const startService = configuredService(directory, {
+      operationTimeoutMs: 1,
+      timeoutScheduler,
+      randomBytes: deterministicRandomBytes(17),
+    });
+    const lateStart = deferred();
+    startService.client = {
+      auth: { signInWithOAuth: () => lateStart.promise },
+    };
+    const starting = startService.beginGoogleSignIn(async () => {});
+    assert.equal(timeoutScheduler.pendingCount(), 1);
+    timeoutScheduler.fireNext();
+    await assert.rejects(starting, /Google sign-in start timed out after 1ms/);
+    assert.equal(fs.existsSync(startService.pendingOAuthPath), false);
+
+    const flowId = "flow1234";
+    const readyService = configuredService(directory, {
+      operationTimeoutMs: 1,
+      timeoutScheduler,
+      randomBytes: deterministicRandomBytes(19),
+    });
+    mockGoogleAuthorization(readyService, { flowId });
+    await readyService.beginGoogleSignIn(async () => {});
+    assert.equal(timeoutScheduler.pendingCount(), 0);
+    const state = readyService.pendingOAuthState;
+    const lateExchange = deferred();
+    let persisted = 0;
+    readyService.persistSession = () => {
+      persisted += 1;
+    };
+    readyService.client = {
+      auth: { exchangeCodeForSession: () => lateExchange.promise },
+    };
+    const exchanging = readyService.handleOAuthCallback(
+      `timefarm://auth/callback?code=abc&timefarm_state=${state}&sb_flow_id=${flowId}`,
+    );
+    assert.equal(timeoutScheduler.pendingCount(), 1);
+    timeoutScheduler.fireNext();
+    await assert.rejects(
+      exchanging,
+      /Google sign-in exchange timed out after 1ms/,
+    );
+    assert.equal(fs.existsSync(readyService.pendingOAuthPath), false);
+
+    lateExchange.resolve({ data: { session: storedSession }, error: null });
+    await flushMicrotasks();
+    assert.equal(persisted, 0);
   }));
 
 test("removes stored credentials only after an unambiguous authentication rejection", async () =>

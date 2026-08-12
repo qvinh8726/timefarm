@@ -14,6 +14,7 @@ async function executeCommandBackedOverlayAction({
   onStopRequested,
   onStateChanged,
   syncNow,
+  intentTimestamp,
 }) {
   const state = repository.loadState();
   const active = activeSessionFromState(state);
@@ -44,9 +45,9 @@ async function executeCommandBackedOverlayAction({
   if (!commandType) return { ok: false, message: "Unsupported timer action." };
 
   const command = { type: commandType, payload: {} };
-  // Main serializes this handler with renderer commands. Validate the current
-  // timer transition before any asynchronous lease request, so a stale overlay
-  // button cannot reserve a lease for a command that will be rejected.
+  // Validate before any asynchronous lease request, then CommandService loads
+  // current state again at commit so a stale overlay button cannot overwrite a
+  // renderer action that completed while the lease request was pending.
   try {
     commandService.preflight?.(command);
   } catch (error) {
@@ -72,7 +73,7 @@ async function executeCommandBackedOverlayAction({
   }
 
   try {
-    const response = commandService.execute(command);
+    const response = commandService.execute(command, { intentTimestamp });
     if (leaseOutcome?.state === "acquired") startLeaseRenewal();
     onStateChanged(response.state);
     void Promise.resolve(syncNow()).catch(() => {});
@@ -103,7 +104,7 @@ function createOverlayTimerActionHandler({
       "A command service is required for overlay timer actions.",
     );
   }
-  return async (action) => {
+  return async (action, options = {}) => {
     return executeCommandBackedOverlayAction({
       action,
       repository,
@@ -114,6 +115,7 @@ function createOverlayTimerActionHandler({
       onStopRequested,
       onStateChanged,
       syncNow,
+      intentTimestamp: options.intentTimestamp,
     });
   };
 }

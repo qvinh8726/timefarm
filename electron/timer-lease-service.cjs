@@ -170,7 +170,7 @@ class DeviceIdStore {
  * the app must never treat an offline request as an acquired lease.
  */
 class TimerLeaseService {
-  /** @param {{authService?: any, userDataPath?: string, deviceIdPath?: string, leaseSeconds?: number, renewEveryMs?: number, rpcTimeoutMs?: number, deviceIdStore?: any, clock?: () => Date, scheduler?: any, timeoutScheduler?: any, renewExecutor?: (work: () => Promise<any>) => Promise<any>}} options */
+  /** @param {{authService?: any, userDataPath?: string, deviceIdPath?: string, leaseSeconds?: number, renewEveryMs?: number, rpcTimeoutMs?: number, deviceIdStore?: any, clock?: () => Date, scheduler?: any, timeoutScheduler?: any}} options */
   constructor({
     authService,
     userDataPath,
@@ -182,7 +182,6 @@ class TimerLeaseService {
     clock = () => new Date(),
     scheduler = { setInterval, clearInterval },
     timeoutScheduler = { setTimeout, clearTimeout },
-    renewExecutor = (work) => work(),
   } = {}) {
     if (
       !authService ||
@@ -191,11 +190,6 @@ class TimerLeaseService {
     ) {
       throw new TypeError(
         "TimerLeaseService requires authService.isConfigured() and authService.getAccessToken().",
-      );
-    }
-    if (typeof renewExecutor !== "function") {
-      throw new TypeError(
-        "TimerLeaseService renewExecutor must be a function.",
       );
     }
     if (typeof clock !== "function")
@@ -252,7 +246,6 @@ class TimerLeaseService {
     this.clock = clock;
     this.scheduler = scheduler;
     this.timeoutScheduler = timeoutScheduler;
-    this.renewExecutor = renewExecutor;
     this.held = false;
     this.lastOutcome = null;
     this.lastAcquiredAt = null;
@@ -306,7 +299,10 @@ class TimerLeaseService {
     }
     this.stopRenewal({ forgetLease: false });
     this.renewalTimer = this.scheduler.setInterval(() => {
-      void this.renewExecutor(() => this.renew()).then((outcome) => {
+      // Renewal is independent background network work. Never route it through
+      // the local SQLite queue: a remote sync deadline must not consume the
+      // lease's renewal window.
+      void this.renew().then((outcome) => {
         if (typeof onOutcome === "function") onOutcome(outcome);
         if (outcome.state !== "acquired") this.stopRenewal();
       });

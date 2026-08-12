@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { goalTargetIssue } from "../domain/goals";
 import { createEmptyState, type AppState } from "../domain/types";
 
 const storageKey = "workly-desktop-state-v1";
@@ -7,6 +8,13 @@ const CurrencySchema = z.enum(["VND", "USD", "EUR", "JPY", "GBP"]);
 const SyncStatusSchema = z.enum(["local", "queued", "synced", "error"]);
 const TimestampSchema = z.string().datetime({ offset: true });
 const IdentifierSchema = z.string().trim().min(1).max(160);
+function boundedText(maximum: number, required = true) {
+  let schema = z.string().trim();
+  if (required) schema = schema.min(1);
+  return schema.refine((value) => Array.from(value).length <= maximum, {
+    message: `Text cannot exceed ${maximum} Unicode characters.`,
+  });
+}
 const MoneySchema = z
   .object({
     amountMinor: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
@@ -17,7 +25,7 @@ const AccountSchema = z
   .object({
     id: IdentifierSchema,
     authUserId: IdentifierSchema.optional(),
-    displayName: z.string().trim().min(1).max(100),
+    displayName: boundedText(100),
     country: z.string().regex(/^[A-Z]{2,3}$/),
     language: z.enum(["vi", "en"]),
     currency: CurrencySchema,
@@ -28,12 +36,12 @@ const AccountSchema = z
 const ProjectSchema = z
   .object({
     id: IdentifierSchema,
-    name: z.string().trim().min(1).max(160),
+    name: boundedText(160),
     paymentModel: z.enum(["per_session", "on_completion", "progressive"]),
     expectedMoney: MoneySchema.optional(),
-    note: z.string().max(5_000).optional(),
-    color: z.string().trim().min(1).max(64),
-    icon: z.string().trim().min(1).max(32),
+    note: boundedText(5_000, false).optional(),
+    color: boundedText(64),
+    icon: boundedText(32),
     status: z.enum(["active", "paused", "completed"]),
     completedAt: TimestampSchema.optional(),
     createdAt: TimestampSchema,
@@ -63,7 +71,7 @@ const SessionSchema = z
     activeDurationMs: z.number().int().nonnegative().optional(),
     status: z.enum(["running", "paused", "completed"]),
     earnings: MoneySchema.optional(),
-    note: z.string().max(5_000).optional(),
+    note: boundedText(5_000, false).optional(),
     createdAt: TimestampSchema,
     updatedAt: TimestampSchema,
     syncStatus: SyncStatusSchema,
@@ -97,7 +105,7 @@ const PaymentSchema = z
     money: MoneySchema,
     receivedAt: TimestampSchema,
     kind: z.enum(["completion", "progressive"]),
-    note: z.string().max(5_000).optional(),
+    note: boundedText(5_000, false).optional(),
     createdAt: TimestampSchema,
     syncStatus: SyncStatusSchema,
   })
@@ -113,11 +121,20 @@ const GoalSchema = z
       "earnings_monthly",
       "projects_completed",
     ]),
-    target: z.number().finite().positive(),
+    target: z.number().finite(),
     createdAt: TimestampSchema,
     syncStatus: SyncStatusSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((goal, context) => {
+    const issue = goalTargetIssue(goal.kind, goal.target);
+    if (!issue) return;
+    context.addIssue({
+      code: "custom",
+      path: ["target"],
+      message: `Invalid ${goal.kind} target: ${issue}.`,
+    });
+  });
 const WidgetSchema = z.enum([
   "timer",
   "goals",
