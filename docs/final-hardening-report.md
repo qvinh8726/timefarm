@@ -141,7 +141,8 @@ Not locally executable on the release workstation:
 
 - `pnpm test:db` reached `127.0.0.1:54322` and failed with `ECONNREFUSED`
   because Docker/Supabase local is not running. No local pgTAP pass is claimed.
-  Passed in GitHub CI on the pushed release source:
+
+Passed in GitHub CI on the pushed release source:
 
 - Fresh database replay of migrations `0001` through `0008`.
 - `supabase db lint --local --level error` — no schema errors.
@@ -185,12 +186,14 @@ Before publication:
 2. Validate workspace claim/link plus authenticated sync push/pull on production
    without wiping existing local data. Test conflicts and competing timer leases
    on physical devices before making a multi-device guarantee.
-3. Enable branch/ruleset protection requiring CI, database, and security checks;
-   production environment secrets are already configured.
-4. Publish only an unsigned `v0.*` prerelease, retain the visible Unknown
+3. Publish only an unsigned `v0.*` prerelease, retain the visible Unknown
    Publisher/SmartScreen disclosure, and verify its SHA-256 plus SBOM and
    build-provenance attestations.
    Code signing and reputation building are deferred to a future stable line.
+
+Strict `master` protection already requires CI, database replay, CodeQL,
+dependency review, and conversation resolution. Production environment secrets
+and reviewer protection are also configured.
 
 ## 12. Remaining known risks
 
