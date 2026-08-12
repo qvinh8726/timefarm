@@ -239,7 +239,7 @@ pnpm check:db
 pnpm test:db
 ```
 
-These pgTAP tests and the hosted `pnpm check:cloud` check were **not run successfully in the v0.2.2 release environment** because local Supabase and hosted credentials were unavailable. The repository includes the migrations and contract tests; their presence is not presented as hosted verification.
+The release workstation could not run these commands because its local Supabase stack was unavailable. GitHub CI independently replayed migrations `0001` through `0007` on a fresh database, found no schema lint errors, and passed both pgTAP files (102 assertions). The hosted `pnpm check:cloud` check still could not run because no hosted URL or public key was supplied, so this is not presented as hosted Auth or multi-device verification.
 
 Build an unpacked offline Windows application and run its smoke test:
 

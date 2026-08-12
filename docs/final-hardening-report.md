@@ -134,6 +134,14 @@ Not locally executable:
 - `pnpm check:cloud` correctly refused to run without a hosted Supabase URL and
   public key. No hosted sync/auth verification is claimed.
 
+Passed in GitHub CI on the pushed release source:
+
+- Fresh database replay of migrations `0001` through `0007`.
+- `supabase db lint --local --level error` — no schema errors.
+- `supabase test db --local` — 2 files / 102 assertions, all successful.
+- Windows quality, build, packaging, and installer smoke jobs.
+- CodeQL JavaScript/TypeScript analysis.
+
 ## 10. Packaging results
 
 - Offline `pnpm pack:win:dir`: pass, including 9/9 fuse checks.
@@ -155,8 +163,8 @@ Not locally executable:
 
 Repository owner/admin must:
 
-1. Run fresh Supabase migration replay, lint, and pgTAP (58 + 44 assertions),
-   then run `pnpm check:cloud` against the real hosted project.
+1. Run `pnpm check:cloud` against the real hosted project; fresh migration
+   replay, lint, and pgTAP (58 + 44 assertions) already pass in GitHub CI.
 2. Configure the GitHub `production` environment secrets and required reviewer;
    enable branch/ruleset protection requiring CI, database, security, and signed
    release checks.

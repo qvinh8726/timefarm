@@ -55,10 +55,11 @@ once a stable release line is declared; 0.x releases remain beta.
   67 renderer tests, 151 Electron tests, coverage gates, the production build,
   bundle budgets, the production dependency audit, packaged-app smoke, 9/9
   Electron fuse checks, and NSIS install/render/uninstall QA.
-- Local pgTAP could not run because the Supabase development stack was not
-  available, and no hosted Supabase URL or public key was supplied for the
-  cloud-contract check. No hosted Auth, RLS/RPC, or multi-device verification
-  is claimed.
+- GitHub CI replayed migrations `0001` through `0007` on a fresh Supabase
+  database, reported no schema lint errors, and passed 102 pgTAP assertions.
+  The release workstation lacked a local Supabase stack, and no hosted URL or
+  public key was supplied; no hosted Auth or multi-device verification is
+  claimed.
 - Prepared the Windows x64 build as an unsigned, offline-only prerelease. The
   installer intentionally bundles no Supabase configuration, so optional cloud
   authentication and synchronization are disabled in this artifact.
