@@ -40,11 +40,11 @@
   },
   "dependencies": {
     "@js-temporal/polyfill": "^0.5.1",
-    "@supabase/supabase-js": "^2.112.2",
-    "lucide-react": "^1.30.0",
+    "@supabase/supabase-js": "^2.112.4",
+    "lucide-react": "^1.37.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "zod": "^4.4.3"
+    "zod": "^4.5.2"
   },
   "devDependencies": {
     "@electron/asar": "3.4.1",
